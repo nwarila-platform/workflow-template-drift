@@ -1,0 +1,121 @@
+{
+  "version": "1",
+  "files": [
+    {
+      "source": "CODE_OF_CONDUCT.md",
+      "target": "CODE_OF_CONDUCT.md"
+    },
+    {
+      "source": "CONTRIBUTING.md",
+      "target": "CONTRIBUTING.md"
+    },
+    {
+      "source": "LICENSE",
+      "target": "LICENSE"
+    },
+    {
+      "source": "SECURITY.md",
+      "target": "SECURITY.md"
+    },
+    {
+      "source": "SUPPORT.md",
+      "target": "SUPPORT.md"
+    },
+    {
+      "source": "docs/decision-records/0001-use-architecture-decision-records.md",
+      "target": "docs/decision-records/org/0001-use-architecture-decision-records.md"
+    },
+    {
+      "source": "docs/decision-records/0002-adopt-diataxis-documentation-framework.md",
+      "target": "docs/decision-records/org/0002-adopt-diataxis-documentation-framework.md"
+    },
+    {
+      "source": "docs/decision-records/0003-use-deny-all-gitignore-strategy.md",
+      "target": "docs/decision-records/org/0003-use-deny-all-gitignore-strategy.md"
+    },
+    {
+      "source": "docs/decision-records/0004-use-renovate-for-dependency-updates.md",
+      "target": "docs/decision-records/org/0004-use-renovate-for-dependency-updates.md"
+    },
+    {
+      "source": "docs/decision-records/0005-pin-terraform-and-provider-versions-exactly.md",
+      "target": "docs/decision-records/org/0005-pin-terraform-and-provider-versions-exactly.md"
+    },
+    {
+      "source": "docs/decision-records/0006-keep-github-control-planes-namespace-local.md",
+      "target": "docs/decision-records/org/0006-keep-github-control-planes-namespace-local.md"
+    },
+    {
+      "source": "docs/decision-records/0007-centralize-universal-ci-reusables-within-each-namespace.md",
+      "target": "docs/decision-records/org/0007-centralize-universal-ci-reusables-within-each-namespace.md"
+    },
+    {
+      "source": "docs/decision-records/0008-enforce-repo-hygiene-by-repo-type.md",
+      "target": "docs/decision-records/org/0008-enforce-repo-hygiene-by-repo-type.md"
+    },
+    {
+      "source": "docs/decision-records/0009-classify-baseline-manifest-byte-identity.md",
+      "target": "docs/decision-records/org/0009-classify-baseline-manifest-byte-identity.md"
+    },
+    {
+      "source": "docs/decision-records/org/.gitkeep",
+      "target": "docs/decision-records/org/.gitkeep"
+    },
+    {
+      "source": "docs/decision-records/template/.gitkeep",
+      "target": "docs/decision-records/template/.gitkeep"
+    },
+    {
+      "source": "docs/decision-records/repo/.gitkeep",
+      "target": "docs/decision-records/repo/.gitkeep"
+    },
+    {
+      "source": "docs/tutorials/.gitkeep",
+      "target": "docs/tutorials/.gitkeep"
+    },
+    {
+      "source": "docs/how-to/.gitkeep",
+      "target": "docs/how-to/.gitkeep"
+    },
+    {
+      "source": "docs/reference/.gitkeep",
+      "target": "docs/reference/.gitkeep"
+    },
+    {
+      "source": "docs/reference/diagram-conventions.md",
+      "target": "docs/reference/diagram-conventions.md"
+    },
+    {
+      "source": "docs/reference/alignment-program-lessons.md",
+      "target": "docs/reference/alignment-program-lessons.md"
+    },
+    {
+      "source": "docs/reference/ci-alignment-design-intent.md",
+      "target": "docs/reference/ci-alignment-design-intent.md"
+    },
+    {
+      "source": "docs/reference/ci-validator-invocation.md",
+      "target": "docs/reference/ci-validator-invocation.md"
+    },
+    {
+      "source": "docs/reference/mirroring.md",
+      "target": "docs/reference/mirroring.md"
+    },
+    {
+      "source": "docs/explanation/.gitkeep",
+      "target": "docs/explanation/.gitkeep"
+    },
+    {
+      "source": "docs/explanation/repo-type-taxonomy-and-ci-focus.md",
+      "target": "docs/explanation/repo-type-taxonomy-and-ci-focus.md"
+    },
+    {
+      "source": "docs/diagrams/.gitkeep",
+      "target": "docs/diagrams/.gitkeep"
+    },
+    {
+      "source": "docs/runbooks/.gitkeep",
+      "target": "docs/runbooks/.gitkeep"
+    }
+  ]
+}
