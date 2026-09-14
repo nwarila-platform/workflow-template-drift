@@ -1,0 +1,1 @@
+{"version":3,"checks":[{"mode":"bytes_equal","source":"template/file.txt","target":"consumer/file.txt"}]}

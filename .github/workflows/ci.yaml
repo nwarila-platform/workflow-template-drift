@@ -1,0 +1,113 @@
+# Purpose: prove that the checker tree and the built image behave identically to the audited spike.
+# Role: PR gate. Two independent jobs: the harness on a host, and the same harness inside the image.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-harness:
+    name: host harness (spike replay)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install the package into an isolated no-pip runtime
+        run: |
+          set -euo pipefail
+          python3.12 -m venv --without-pip .runtime
+          ln -s ../../../../workflow_template_drift .runtime/lib/python3.12/site-packages/workflow_template_drift
+          .runtime/bin/python3.12 -I -c 'import sys, workflow_template_drift; print(sys.prefix, workflow_template_drift.__file__)'
+      - name: Full harness (51 tests, no skips on a host)
+        run: |
+          set -euo pipefail
+          PATH="$PWD/.runtime/bin:$PATH" python3.12 -B -m unittest discover -s . -t . -v 2>&1 | tee .runtime/unittest.output
+          grep -q '^Ran 51 tests' .runtime/unittest.output
+          grep -q '^OK$' .runtime/unittest.output
+
+  image-parity:
+    name: image parity (harness inside the built image)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Build the image (BuildKit)
+        run: docker build --file Containerfile --tag workflow-template-drift:ci .
+      - name: Image identity
+        run: |
+          set -euo pipefail
+          docker image inspect workflow-template-drift:ci --format '{{.Config.User}} {{json .Config.Entrypoint}}' | tee identity.txt
+          test "$(cat identity.txt)" = '65532:65532 ["/usr/bin/python3.12","-I","-X","utf8","-B","-m","workflow_template_drift"]'
+      - name: Harness inside the image (51 tests, exactly the two host-only proofs skipped)
+        run: |
+          set -euo pipefail
+          mkdir -p .ci-harness/artifacts
+          cp -r tests fixtures tools workflow_template_drift .ci-harness/
+          chmod -R a+rwX .ci-harness
+          docker run --rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+            --tmpfs /tmp:rw,size=1g -v "$PWD/.ci-harness:/probe:rw" \
+            --entrypoint /usr/bin/python3.12 -w /probe workflow-template-drift:ci \
+            -B -m unittest discover -s /probe -t /probe -v 2>&1 | tee .ci-harness/harness.output
+          grep -q '^Ran 51 tests' .ci-harness/harness.output
+          grep -q '^OK (skipped=2)$' .ci-harness/harness.output
+          test "$(grep -c ' \.\.\. skipped ' .ci-harness/harness.output)" -eq 2
+          grep -Fqx "test_38_no_pip_isolated_runtime_layout (tests.test_engine.EngineTests.test_38_no_pip_isolated_runtime_layout) ... skipped '.runtime is required for the isolated-layout host proof'" .ci-harness/harness.output
+          grep -Fqx "test_real_git_checks_applies_and_cleans_seven_fixes (tests.test_git_patch.GitPatchTests.test_real_git_checks_applies_and_cleans_seven_fixes) ... skipped 'git is required for the real-git apply proof'" .ci-harness/harness.output
+      - name: Determinism golden through the container ABI
+        run: |
+          set -euo pipefail
+          status=0
+          docker run --rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+            -v "$PWD/fixtures/determinism/workspace:/workspace:ro" \
+            -v "$PWD/fixtures/determinism/source:/source:ro" \
+            workflow-template-drift:ci \
+            --workspace /workspace --source /source --config drift.json --fail-on error --format json \
+            > golden.stdout 2> golden.stderr || status=$?
+          test "$status" -eq 1
+          test ! -s golden.stderr
+          cmp golden.stdout fixtures/goldens/determinism.stdout.json
+      - name: Usage path is a bounded document with zero stderr
+        run: |
+          set -euo pipefail
+          status=0
+          docker run --rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+            workflow-template-drift:ci > usage.stdout 2> usage.stderr || status=$?
+          test "$status" -eq 2
+          test ! -s usage.stderr
+          python3 - <<'PY'
+          from pathlib import Path
+
+          expected = (
+              b'{"version":1,"status":"ERROR","error":'
+              b'{"code":"invalid_usage","message":"invalid command-line arguments"}}\n'
+          )
+          raise SystemExit(Path("usage.stdout").read_bytes() != expected)
+          PY
