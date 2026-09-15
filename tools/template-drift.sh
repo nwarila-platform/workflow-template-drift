@@ -65,8 +65,10 @@ fi
 
 if command -v podman >/dev/null 2>&1; then
   runtime='podman'
+  runtime_user_args=(--userns=keep-id --user "$(id -u):$(id -g)")
 elif command -v docker >/dev/null 2>&1; then
   runtime='docker'
+  runtime_user_args=(--user "$(id -u):$(id -g)")
 else
   printf '%s\n' 'error: podman or docker is required' >&2
   exit 2
@@ -117,9 +119,6 @@ if [[ $(git -C "${source_dir}" rev-parse HEAD) != "${template_ref}" ]]; then
   exit 2
 fi
 
-# A checkout created under a 007 umask is not readable by image UID 65532.
-chmod -R a+rX "${PWD}" "${source_dir}"
-
 # renovate: datasource=docker depName=ghcr.io/nwarila-platform/workflow-template-drift
 image='ghcr.io/nwarila-platform/workflow-template-drift:1.0.1@sha256:f969139e479618f59cb57d02053061c82bb5d89815a53d05ac878dffaea7e35d'
 "${runtime}" pull --quiet "${image}" >/dev/null
@@ -130,6 +129,7 @@ patch_candidate=${run_tmp}/template-drift.patch
 status=0
 "${runtime}" run --rm --network=none --read-only --cap-drop=ALL \
   --security-opt=no-new-privileges \
+  "${runtime_user_args[@]}" \
   --volume "${PWD}:/workspace:ro" \
   --volume "${source_dir}:/source:ro" \
   "${image}" \

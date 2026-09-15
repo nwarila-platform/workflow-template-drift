@@ -106,10 +106,13 @@ optional. The default template carries the org's ADR mirror policy, converted fr
 manifest with `tools/migrate_manifest.py`.
 
 Locally, `tools/template-drift.sh --template <owner/repo> --ref <40-hex> [--config …] [--fail-on …]`
-runs the same image (Podman or Docker) against the current directory, caches the template checkout
-under `${XDG_CACHE_HOME:-$HOME/.cache}/template-drift/`, prints the JSON result, and writes a nonempty
-patch to `./template-drift.patch`. As a pre-commit hook, select a revision that contains both the hook
-manifest and helper:
+runs the same image (Podman or Docker) as the invoking user against the current directory, caches the
+template checkout under `${XDG_CACHE_HOME:-$HOME/.cache}/template-drift/`, prints the JSON result,
+and writes a nonempty patch to `./template-drift.patch`. It never changes permissions in the current
+tree, which need not be readable by the image's UID 65532. The Docker path assumes a local rootful
+daemon without `userns-remap`; a remapped daemon requires bind-mount ownership to be arranged for
+its subordinate IDs. As a pre-commit hook, select a revision that contains both the hook manifest
+and helper:
 
 ```yaml
 - repo: https://github.com/nwarila-platform/workflow-template-drift
