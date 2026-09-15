@@ -555,30 +555,57 @@ jobs:
             --print-provenance > dist/verify/provenance.json
           test -s dist/verify/provenance.json
       - name: Run determinism golden and exact usage path on both platforms
-        env:
-          INDEX_DIGEST: ${{ needs.publish-candidate.outputs.digest }}
         run: |
           set -euo pipefail
           test ! -e "${DOCKER_CONFIG}/config.json"
-          for arch in amd64 arm64; do
+          report_failure() {
+            local arch="$1"
+            local oracle="$2"
+            local status="$3"
+            local stderr_path="$4"
+            printf 'runtime verification failed: arch=%s oracle=%s observed_status=%s\n' \
+              "${arch}" "${oracle}" "${status}" >&2
+            printf 'stderr (first 4096 bytes from %s):\n' "${stderr_path}" >&2
+            if [[ -f "${stderr_path}" ]]; then
+              head -c 4096 -- "${stderr_path}" >&2 || true
+              printf '\n' >&2
+            else
+              printf '<missing>\n' >&2
+            fi
+            exit 1
+          }
+
+          while read -r arch child_digest _; do
+            golden_stderr="dist/verify/golden-${arch}.stderr"
             status=0
-            docker run --rm --platform "linux/${arch}" --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+            docker run --quiet --rm --platform "linux/${arch}" --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
               -v "$PWD/fixtures/determinism/workspace:/workspace:ro" \
               -v "$PWD/fixtures/determinism/source:/source:ro" \
-              "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
+              "${IMAGE_REPOSITORY}@${child_digest}" \
               --workspace /workspace --source /source --config drift.json --fail-on error --format json \
-              > "dist/verify/golden-${arch}.stdout" 2> "dist/verify/golden-${arch}.stderr" || status=$?
-            test "${status}" -eq 1
-            test ! -s "dist/verify/golden-${arch}.stderr"
-            cmp "dist/verify/golden-${arch}.stdout" fixtures/goldens/determinism.stdout.json
+              > "dist/verify/golden-${arch}.stdout" 2> "${golden_stderr}" || status=$?
+            if [[ "${status}" -ne 1 ]]; then
+              report_failure "${arch}" "golden-exit" "${status}" "${golden_stderr}"
+            fi
+            if [[ -s "${golden_stderr}" ]]; then
+              report_failure "${arch}" "golden-stderr" "${status}" "${golden_stderr}"
+            fi
+            if ! cmp -s "dist/verify/golden-${arch}.stdout" fixtures/goldens/determinism.stdout.json; then
+              report_failure "${arch}" "golden-bytes" "${status}" "${golden_stderr}"
+            fi
 
+            usage_stderr="dist/verify/usage-${arch}.stderr"
             status=0
-            docker run --rm --platform "linux/${arch}" --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-              "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
-              > "dist/verify/usage-${arch}.stdout" 2> "dist/verify/usage-${arch}.stderr" || status=$?
-            test "${status}" -eq 2
-            test ! -s "dist/verify/usage-${arch}.stderr"
-            python3.12 - "dist/verify/usage-${arch}.stdout" <<'PY'
+            docker run --quiet --rm --platform "linux/${arch}" --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+              "${IMAGE_REPOSITORY}@${child_digest}" \
+              > "dist/verify/usage-${arch}.stdout" 2> "${usage_stderr}" || status=$?
+            if [[ "${status}" -ne 2 ]]; then
+              report_failure "${arch}" "usage-exit" "${status}" "${usage_stderr}"
+            fi
+            if [[ -s "${usage_stderr}" ]]; then
+              report_failure "${arch}" "usage-stderr" "${status}" "${usage_stderr}"
+            fi
+            if ! python3.12 - "dist/verify/usage-${arch}.stdout" <<'PY'
           import sys
           from pathlib import Path
 
@@ -591,7 +618,11 @@ jobs:
           if Path(sys.argv[1]).read_bytes() != expected:
               raise SystemExit(f"usage bytes mismatch: {sys.argv[1]}")
           PY
-          done
+            then
+              report_failure "${arch}" "usage-bytes" "${status}" "${usage_stderr}"
+            fi
+            printf 'runtime verification passed: arch=%s child=%s\n' "${arch}" "${child_digest}"
+          done < dist/verify/platform-records
 
   promote:
     name: Promote verified digest to consumer tags
