@@ -31,6 +31,7 @@
 # --- [ allowed: repository configuration ] -------------------------------------------------- #
 !/.dockerignore
 !/.gitignore
+!/.pre-commit-hooks.yaml
 
 # --- [ allowed: top-level documents ] ------------------------------------------------------- #
 !/LICENSE
@@ -54,6 +55,7 @@
 
 # --- [ allowed: the publish pipeline's pinned registry client and the release version ] ----- #
 !/tools/install-crane.sh
+!/tools/template-drift.sh
 !/VERSION
 
 # --- [ allowed: the evidence harness ] ------------------------------------------------------ #

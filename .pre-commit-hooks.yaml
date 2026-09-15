@@ -1,0 +1,6 @@
+- id: template-drift
+  name: workflow template drift
+  entry: tools/template-drift.sh
+  language: script
+  pass_filenames: false
+  always_run: true

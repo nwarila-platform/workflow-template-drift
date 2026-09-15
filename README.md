@@ -75,6 +75,50 @@ slsa-verifier verify-image "ghcr.io/nwarila-platform/workflow-template-drift@$(c
   --source-uri github.com/nwarila-platform/workflow-template-drift --source-tag vX.Y.Z
 ```
 
+## Use it in a repository
+
+A consumer runs the org reusable workflow and pins the template commit; nothing else is copied into the
+repository. The check context is the caller job key joined with the reusable job name
+(`template-drift / template drift`), which is what a terraform `required_checks` entry names.
+
+```yaml
+name: Template drift
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  template-drift:
+    uses: nwarila-platform/.github/.github/workflows/reusable-template-drift.yaml@<40-hex commit>
+    with:
+      template_ref: <40-hex commit of the template repository>
+```
+
+The reusable checks out the caller and the pinned template, runs this image by digest with no network,
+no token, and read-only mounts, writes `::error file=` / `::warning file=` annotations for the first
+ten findings, renders up to 200 findings and up to 65,536 patch characters into the job summary, and
+uploads the complete patch as the `template-drift-patch` artifact when it is nonempty. Inputs
+`template_repository` (default `nwarila-platform/.github`),
+`config` (default `template-drift.json`, relative to the template), and `fail_on` (default `error`) are
+optional. The default template carries the org's ADR mirror policy, converted from its drift-gate
+manifest with `tools/migrate_manifest.py`.
+
+Locally, `tools/template-drift.sh --template <owner/repo> --ref <40-hex> [--config …] [--fail-on …]`
+runs the same image (Podman or Docker) against the current directory, caches the template checkout
+under `${XDG_CACHE_HOME:-$HOME/.cache}/template-drift/`, prints the JSON result, and writes a nonempty
+patch to `./template-drift.patch`. As a pre-commit hook, select a revision that contains both the hook
+manifest and helper:
+
+```yaml
+- repo: https://github.com/nwarila-platform/workflow-template-drift
+  rev: <40-hex commit containing the template-drift hook>
+  hooks:
+    - id: template-drift
+      args: ["--template", "nwarila-platform/.github", "--ref", "<40-hex commit>"]
+```
+
 ## Run the harness on a host (Python 3.12, git)
 
 ```sh
