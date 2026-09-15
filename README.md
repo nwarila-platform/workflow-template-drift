@@ -53,9 +53,27 @@ Exceeding any limit is an `ERROR` with code `resource_limit`.
 ## Status
 
 The checker, the offline converter, and the evidence harness are implemented. CI runs the 51-test
-corpus on a host and inside the built image and proves that the determinism fixture's checker
-result is byte-identical on both paths. The image is not yet published or signed; publication,
-signing, provenance, and consumer documentation are separate pieces.
+corpus on a host and inside the built image for `linux/amd64` and `linux/arm64`, and proves that
+the determinism fixture's checker result is byte-identical on every path.
+
+## Publication
+
+Pushing a signed tag `vX.Y.Z` whose version equals the `VERSION` file runs
+`.github/workflows/publish.yaml`. It builds both platforms into one unaliased image index pushed by
+digest to `ghcr.io/nwarila-platform/workflow-template-drift`, attaches one SPDX SBOM per platform,
+signs the index and both children with Sigstore keyless signing, attaches SLSA build level 3
+provenance, verifies all of it anonymously (no registry credential) together with the determinism
+and usage goldens on both platforms, and only then tags the verified digest `:X.Y.Z` and
+`:sha-<commit>`. There is no `latest` tag. A consumer verifies a release with:
+
+```sh
+cosign verify \
+  --certificate-identity "https://github.com/nwarila-platform/workflow-template-drift/.github/workflows/publish.yaml@refs/tags/vX.Y.Z" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/nwarila-platform/workflow-template-drift:X.Y.Z
+slsa-verifier verify-image "ghcr.io/nwarila-platform/workflow-template-drift@$(crane digest ghcr.io/nwarila-platform/workflow-template-drift:X.Y.Z)" \
+  --source-uri github.com/nwarila-platform/workflow-template-drift --source-tag vX.Y.Z
+```
 
 ## Run the harness on a host (Python 3.12, git)
 
