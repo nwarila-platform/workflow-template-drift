@@ -1,0 +1,8 @@
+diff --git a/consumer/file.txt b/consumer/file.txt
+--- a/consumer/file.txt
++++ b/consumer/file.txt
+@@ -1,2 +1,2 @@
+-actual é
+-::error::consumer
++expected 😀
++::warning::template

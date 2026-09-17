@@ -575,51 +575,62 @@ jobs:
             exit 1
           }
 
+          printf '%s\n' 'template-drift: error: invalid_usage: invalid command-line arguments' \
+            > dist/verify/usage.expected
+
           while read -r arch child_digest _; do
-            golden_stderr="dist/verify/golden-${arch}.stderr"
+            text_stdout="dist/verify/golden-${arch}.text.stdout"
+            text_stderr="dist/verify/golden-${arch}.text.stderr"
             status=0
             docker run --quiet --rm --platform "linux/${arch}" --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
               -v "$PWD/fixtures/determinism/workspace:/workspace:ro" \
-              -v "$PWD/fixtures/determinism/source:/source:ro" \
+              -v "$PWD/fixtures/determinism/source:/template:ro" \
               "${IMAGE_REPOSITORY}@${child_digest}" \
-              --workspace /workspace --source /source --config drift.json --fail-on error --format json \
-              > "dist/verify/golden-${arch}.stdout" 2> "${golden_stderr}" || status=$?
+              --workspace /workspace --template example/determinism=/template --config drift.json --fail-on error --format text \
+              > "${text_stdout}" 2> "${text_stderr}" || status=$?
             if [[ "${status}" -ne 1 ]]; then
-              report_failure "${arch}" "golden-exit" "${status}" "${golden_stderr}"
+              report_failure "${arch}" "text-exit" "${status}" "${text_stderr}"
             fi
-            if [[ -s "${golden_stderr}" ]]; then
-              report_failure "${arch}" "golden-stderr" "${status}" "${golden_stderr}"
+            if [[ -s "${text_stderr}" ]]; then
+              report_failure "${arch}" "text-stderr" "${status}" "${text_stderr}"
             fi
-            if ! cmp -s "dist/verify/golden-${arch}.stdout" fixtures/goldens/determinism.stdout.json; then
-              report_failure "${arch}" "golden-bytes" "${status}" "${golden_stderr}"
+            if ! cmp -s "${text_stdout}" fixtures/goldens/determinism.text; then
+              report_failure "${arch}" "text-bytes" "${status}" "${text_stderr}"
             fi
 
+            patch_stdout="dist/verify/golden-${arch}.patch.stdout"
+            patch_stderr="dist/verify/golden-${arch}.patch.stderr"
+            status=0
+            docker run --quiet --rm --platform "linux/${arch}" --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+              -v "$PWD/fixtures/determinism/workspace:/workspace:ro" \
+              -v "$PWD/fixtures/determinism/source:/template:ro" \
+              "${IMAGE_REPOSITORY}@${child_digest}" \
+              --workspace /workspace --template example/determinism=/template --config drift.json --fail-on error --format patch \
+              > "${patch_stdout}" 2> "${patch_stderr}" || status=$?
+            if [[ "${status}" -ne 1 ]]; then
+              report_failure "${arch}" "patch-exit" "${status}" "${patch_stderr}"
+            fi
+            if [[ -s "${patch_stderr}" ]]; then
+              report_failure "${arch}" "patch-stderr" "${status}" "${patch_stderr}"
+            fi
+            if ! cmp -s "${patch_stdout}" fixtures/goldens/determinism.patch; then
+              report_failure "${arch}" "patch-bytes" "${status}" "${patch_stderr}"
+            fi
+
+            usage_stdout="dist/verify/usage-${arch}.stdout"
             usage_stderr="dist/verify/usage-${arch}.stderr"
             status=0
             docker run --quiet --rm --platform "linux/${arch}" --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
               "${IMAGE_REPOSITORY}@${child_digest}" \
-              > "dist/verify/usage-${arch}.stdout" 2> "${usage_stderr}" || status=$?
+              > "${usage_stdout}" 2> "${usage_stderr}" || status=$?
             if [[ "${status}" -ne 2 ]]; then
               report_failure "${arch}" "usage-exit" "${status}" "${usage_stderr}"
             fi
-            if [[ -s "${usage_stderr}" ]]; then
-              report_failure "${arch}" "usage-stderr" "${status}" "${usage_stderr}"
+            if [[ -s "${usage_stdout}" ]]; then
+              report_failure "${arch}" "usage-stdout" "${status}" "${usage_stderr}"
             fi
-            if ! python3.12 - "dist/verify/usage-${arch}.stdout" <<'PY'
-          import sys
-          from pathlib import Path
-
-          expected = (
-              b'{"version":1,"status":"ERROR","error":'
-              b'{"code":"invalid_usage","message":"invalid command-line arguments"}}\n'
-          )
-          if len(expected) != 107:
-              raise SystemExit("internal usage-document length mismatch")
-          if Path(sys.argv[1]).read_bytes() != expected:
-              raise SystemExit(f"usage bytes mismatch: {sys.argv[1]}")
-          PY
-            then
-              report_failure "${arch}" "usage-bytes" "${status}" "${usage_stderr}"
+            if ! cmp -s "${usage_stderr}" dist/verify/usage.expected; then
+              report_failure "${arch}" "usage-stderr" "${status}" "${usage_stderr}"
             fi
             printf 'runtime verification passed: arch=%s child=%s\n' "${arch}" "${child_digest}"
           done < dist/verify/platform-records

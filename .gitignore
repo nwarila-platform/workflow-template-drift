@@ -15,6 +15,7 @@
 # Git does not descend into an excluded directory, so every directory on the path to an
 # allowed file is re-included by name. This publishes no files by itself.
 !/.github/
+!/.github/renovate.json5
 !/.github/workflows/
 !/fixtures/
 !/fixtures/determinism/
@@ -23,7 +24,6 @@
 !/fixtures/determinism/workspace/
 !/fixtures/determinism/workspace/consumer/
 !/fixtures/goldens/
-!/fixtures/real/
 !/tests/
 !/tools/
 !/workflow_template_drift/
@@ -42,6 +42,7 @@
 # --- [ allowed: GitHub configuration ] ------------------------------------------------------ #
 !/.github/CODEOWNERS
 !/.github/workflows/ci.yaml
+!/.github/workflows/check.yaml
 !/.github/workflows/publish.yaml
 
 # --- [ allowed: the checker ] --------------------------------------------------------------- #
@@ -49,9 +50,6 @@
 !/workflow_template_drift/__init__.py
 !/workflow_template_drift/__main__.py
 !/workflow_template_drift/engine.py
-
-# --- [ allowed: the offline manifest converter (never in the image) ] ----------------------- #
-!/tools/migrate_manifest.py
 
 # --- [ allowed: the publish pipeline's pinned registry client and the release version ] ----- #
 !/tools/install-crane.sh
@@ -61,17 +59,14 @@
 # --- [ allowed: the evidence harness ] ------------------------------------------------------ #
 !/tests/__init__.py
 !/tests/support.py
-!/tests/test_bounds.py
-!/tests/test_converter.py
 !/tests/test_determinism.py
 !/tests/test_engine.py
 !/tests/test_git_patch.py
 !/fixtures/determinism/source/drift.json
 !/fixtures/determinism/source/template/file.txt
 !/fixtures/determinism/workspace/consumer/file.txt
-!/fixtures/goldens/determinism.stdout.json
-!/fixtures/real/nwarila-github-baseline-manifest.json
-!/fixtures/real/terraform-runner-template-baseline-manifest.json
+!/fixtures/goldens/determinism.text
+!/fixtures/goldens/determinism.patch
 
 # --- [ never tracked, even by a future allowance ] ------------------------------------------ #
 # Local no-pip runtime, test artifacts, the CI harness copy, and bytecode caches.

@@ -1,6 +1,14 @@
 - id: template-drift
   name: workflow template drift
-  entry: tools/template-drift.sh
+  entry: tools/template-drift.sh check
   language: script
   pass_filenames: false
   always_run: true
+  stages: [pre-push]
+- id: template-drift-sync
+  name: sync workflow template drift
+  entry: tools/template-drift.sh sync
+  language: script
+  pass_filenames: false
+  always_run: true
+  stages: [manual]
