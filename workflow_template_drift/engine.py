@@ -1,18 +1,12 @@
 """Core evaluator. The public ``evaluate`` function has no write side effects."""
-
 from __future__ import annotations
-
 import difflib
-import hashlib
 import json
 import os
 import re
 import stat
 from dataclasses import dataclass
 from typing import Any
-
-
-RESULT_VERSION = 1
 MAX_OUTPUT = 8_388_608
 MAX_CONFIG_BYTES = 1_048_576
 MAX_JSON_DEPTH = 32
@@ -48,6 +42,7 @@ class EvaluationError(Exception):
 
 @dataclass(frozen=True)
 class Check:
+    template: str
     severity: str
     mode: str
     target: str
@@ -184,7 +179,7 @@ def _exact_keys(obj: Any, required: set[str], optional: set[str], where: str) ->
     return obj
 
 
-def _schema_config(value: Any) -> list[Check]:
+def _schema_config(value: Any, template: str) -> list[Check]:
     root = _exact_keys(value, {"version", "checks"}, set(), "config")
     version = root["version"]
     if not (isinstance(version, int) and not isinstance(version, bool) and version == 3):
@@ -197,7 +192,6 @@ def _schema_config(value: Any) -> list[Check]:
     if len(items) > MAX_CHECKS:
         raise EvaluationError("resource_limit", "config.checks exceeds 4096-check limit")
     checks: list[Check] = []
-    targets: set[str] = set()
     for index, item in enumerate(items):
         where = f"config.checks[{index}]"
         if not isinstance(item, dict):
@@ -245,22 +239,24 @@ def _schema_config(value: Any) -> list[Check]:
                 "invalid_config",
                 f"{where} target is not safe for git apply",
             )
-        if target in targets:
-            raise EvaluationError(
-                "invalid_config",
-                f"duplicate target {target!r}",
-            )
-        if any(
-            target.startswith(other + "/") or other.startswith(target + "/")
-            for other in targets
-        ):
-            raise EvaluationError(
-                "invalid_config",
-                f"{where} target overlaps another target path",
-            )
-        targets.add(target)
-        checks.append(Check(severity, mode, target, source, count))
+        checks.append(Check(template, severity, mode, target, source, count))
     return checks
+
+
+def _validate_targets(checks: list[Check]) -> None:
+    seen: list[Check] = []
+    if len(checks) > MAX_CHECKS:
+        raise EvaluationError("resource_limit", "combined configs exceed 4096-check limit")
+    for check in checks:
+        for other in seen:
+            if (check.target == other.target or check.target.startswith(other.target + "/")
+                    or other.target.startswith(check.target + "/")):
+                raise EvaluationError(
+                    "invalid_config",
+                    f"target {check.target!r} from {check.template} overlaps "
+                    f"target {other.target!r} from {other.template}",
+                )
+        seen.append(check)
 
 
 def _same_snapshot(left: os.stat_result, right: os.stat_result) -> bool:
@@ -439,13 +435,6 @@ def _lines(data: bytes) -> list[bytes]:
         start = index + 1
 
 
-def _first_unequal(left: bytes, right: bytes) -> int:
-    for index, (a, b) in enumerate(zip(left, right)):
-        if a != b:
-            return index
-    return min(len(left), len(right))
-
-
 def _patch_lines(
     old: bytes | None,
     new: bytes | None,
@@ -493,26 +482,15 @@ def _patch_lines(
     return "".join(output)
 
 
-def _finding(check: Check, kind: str, fixable: bool, details: dict[str, Any]) -> dict[str, Any]:
+def _finding(check: Check, kind: str, fixable: bool) -> dict[str, Any]:
     assert kind in KINDS
     return {
         "target": check.target,
         "mode": check.mode,
         "severity": check.severity,
         "kind": kind,
+        "template": check.template,
         "fixable": fixable,
-        "details": {key: details[key] for key in sorted(details, key=lambda key: key.encode("utf-8"))},
-    }
-
-
-def _hash_details(source: bytes, target: bytes) -> dict[str, Any]:
-    return {
-        "binary": _text(source) is None or _text(target) is None,
-        "first_unequal_offset": _first_unequal(source, target),
-        "source_length": len(source),
-        "source_sha256": hashlib.sha256(source).hexdigest(),
-        "target_length": len(target),
-        "target_sha256": hashlib.sha256(target).hexdigest(),
     }
 
 
@@ -562,7 +540,7 @@ def _evaluate_check(
     workspace_fd: int,
     source: SourceObject | None,
     budget: ReadBudget,
-) -> tuple[dict[str, Any] | None, str]:
+) -> tuple[dict[str, str] | None, str]:
     target_obj = _target_object(workspace_fd, check.target)
     patch = ""
     try:
@@ -576,12 +554,7 @@ def _evaluate_check(
                     fixable = True
                     assert target_obj.before is not None
                     patch = _patch_lines(actual, None, check.target, target_obj.before.st_mode)
-            return _finding(
-                check,
-                "target_present",
-                fixable,
-                {"target_type": target_obj.shape},
-            ), patch
+            return _finding(check, "target_present", fixable), patch
 
         if check.mode == "must_exist":
             if target_obj.shape == "regular":
@@ -595,7 +568,7 @@ def _evaluate_check(
                     fixable = True
                     patch = _patch_lines(None, source.data, check.target)
             kind = "target_missing" if target_obj.shape == "missing" else "target_not_regular"
-            return _finding(check, kind, fixable, {"target_type": target_obj.shape}), patch
+            return _finding(check, kind, fixable), patch
 
         assert source is not None and source.data is not None
         desired = source.data
@@ -609,7 +582,7 @@ def _evaluate_check(
                     desired_for_patch = desired
                 patch = _patch_lines(None, desired_for_patch, check.target)
             kind = "target_missing" if target_obj.shape == "missing" else "target_not_regular"
-            return _finding(check, kind, fixable, {"target_type": target_obj.shape}), patch
+            return _finding(check, kind, fixable), patch
 
         actual = _read_target(target_obj, check.target, budget)
         if check.mode == "bytes_equal":
@@ -618,35 +591,23 @@ def _evaluate_check(
             fixable = _text(desired) is not None and _text(actual) is not None
             if fixable:
                 patch = _patch_lines(actual, desired, check.target)
-            return _finding(check, "content_mismatch", fixable, _hash_details(desired, actual)), patch
+            return _finding(check, "content_mismatch", fixable), patch
 
         assert check.mode == "head_lines_equal" and check.head_lines is not None
         if _text(actual) is None:
-            return _finding(
-                check,
-                "target_malformed",
-                False,
-                {"target_length": len(actual)},
-            ), patch
+            return _finding(check, "target_malformed", False), patch
         source_lines = _lines(desired)
         target_lines = _lines(actual)
         count = check.head_lines
         if len(target_lines) < count:
             replacement = b"".join(source_lines[:count])
             patch = _patch_lines(actual, replacement, check.target)
-            return _finding(
-                check,
-                "target_too_short",
-                True,
-                {"head_lines": count, "target_lines": len(target_lines)},
-            ), patch
+            return _finding(check, "target_too_short", True), patch
         if source_lines[:count] == target_lines[:count]:
             return None, patch
         desired_target = b"".join(source_lines[:count] + target_lines[count:])
         patch = _patch_lines(actual, desired_target, check.target)
-        details = _hash_details(b"".join(source_lines[:count]), b"".join(target_lines[:count]))
-        details["head_lines"] = count
-        return _finding(check, "content_mismatch", True, details), patch
+        return _finding(check, "content_mismatch", True), patch
     finally:
         if target_obj.fd is not None:
             os.close(target_obj.fd)
@@ -656,92 +617,111 @@ def _error_result(error: EvaluationError) -> dict[str, Any]:
     item: dict[str, Any] = {"code": error.code, "message": error.message}
     if error.path is not None:
         item["path"] = error.path
-    return {"version": RESULT_VERSION, "status": "ERROR", "error": item}
+    return {"status": "ERROR", "error": item}
 
 
-def canonical_bytes(result: dict[str, Any]) -> bytes:
-    return (
-        json.dumps(
-            result,
-            ensure_ascii=True,
-            allow_nan=False,
-            separators=(",", ":"),
-            sort_keys=False,
-        )
-        + "\n"
-    ).encode("ascii")
+MESSAGES: dict[str, str] = {
+    "target_missing": "target is missing",
+    "target_not_regular": "target is not a regular file",
+    "content_mismatch": "target content differs from the pinned template",
+    "target_malformed": "target is not strict UTF-8 text without BOM or NUL",
+    "target_too_short": "target has fewer than the required head lines",
+    "target_present": "target must be absent",
+}
+def text_bytes(result: dict[str, Any]) -> bytes:
+    """Render the fixed problem-matcher grammar."""
+    findings = result["findings"]
+    lines = [
+        f"{item['severity']}: {item['target']}: {item['mode']}/{item['kind']} "
+        f"(template {item['template']}): {MESSAGES[item['kind']]}\n"
+        for item in findings
+    ]
+    if result["status"] == "PASS":
+        lines.append("template-drift: PASS\n")
+    elif result["status"] == "WARNING":
+        lines.append(f"template-drift: WARNING ({len(findings)} findings)\n")
+    else:
+        fixable = sum(item["fixable"] for item in findings)
+        lines.append(f"template-drift: FAIL ({len(findings)} findings, {fixable} fixable)\n")
+    return "".join(lines).encode("utf-8")
+def patch_bytes(result: dict[str, Any]) -> bytes:
+    """Render the aggregate git patch."""
+    return result["patch"].encode("utf-8")
+
+
+def error_bytes(result: dict[str, Any]) -> bytes:
+    error = result["error"]
+    suffix = f" ({error['path']})" if "path" in error else ""
+    return f"template-drift: error: {error['code']}: {error['message']}{suffix}\n".encode()
 
 
 def evaluate(
     workspace: str,
-    source_root: str,
+    template_roots: list[tuple[str, str]],
     config_path: str,
     fail_on: str,
 ) -> tuple[dict[str, Any], int]:
-    """Evaluate two mounted trees and return the result data model plus its exit code."""
+    """Evaluate one workspace against every template and return a single result."""
     if fail_on not in {"error", "warning"}:
         return _error_result(EvaluationError("invalid_usage", "--fail-on must be error or warning")), 2
     try:
         config_path = _require_path(config_path, "--config")
     except EvaluationError as error:
         return _error_result(error), 2
-    source_fd = workspace_fd = None
-    sources: dict[str, SourceObject] = {}
+    source_fds: list[int] = []
+    workspace_fd = None
+    source_sets: list[dict[str, SourceObject]] = []
     budget = ReadBudget()
     try:
         try:
-            source_fd = os.open(source_root, _O_BASE | _O_DIRECTORY | _O_NOFOLLOW)
             workspace_fd = os.open(workspace, _O_BASE | _O_DIRECTORY | _O_NOFOLLOW)
+            source_fds = [os.open(root, _O_BASE | _O_DIRECTORY | _O_NOFOLLOW) for _, root in template_roots]
         except OSError:
             raise EvaluationError("io_error", "cannot open mount root") from None
-        config_obj = _open_regular(source_fd, config_path, config=True)
-        try:
-            raw_config = _read_stable(config_obj, config_path, "config", budget)
-        finally:
-            os.close(config_obj.fd)
-        checks = _schema_config(_parse_config(raw_config))
-        sources = _preflight(source_fd, checks, budget)
+        grouped: list[list[Check]] = []
+        for (name, _), source_fd in zip(template_roots, source_fds, strict=True):
+            config_obj = _open_regular(source_fd, config_path, config=True)
+            try:
+                raw = _read_stable(config_obj, config_path, "config", budget)
+            finally:
+                os.close(config_obj.fd)
+            grouped.append(_schema_config(_parse_config(raw), name))
+        checks = [check for group in grouped for check in group]
+        _validate_targets(checks)
+        source_sets = [_preflight(fd, group, budget) for fd, group in zip(source_fds, grouped, strict=True)]
         evaluated: list[tuple[dict[str, Any], str]] = []
-        for check in checks:
-            finding, patch = _evaluate_check(
-                check,
-                workspace_fd,
-                sources.get(check.source or ""),
-                budget,
-            )
-            if finding is not None:
-                evaluated.append((finding, patch))
+        for group, sources in zip(grouped, source_sets, strict=True):
+            for check in group:
+                finding, patch = _evaluate_check(check, workspace_fd, sources.get(check.source or ""), budget)
+                if finding is not None:
+                    evaluated.append((finding, patch))
         evaluated.sort(
             key=lambda pair: tuple(
-                part.encode("utf-8") for part in (pair[0]["target"], pair[0]["mode"])
+                part.encode("utf-8") for part in (pair[0]["target"], pair[0]["mode"], pair[0]["template"])
             )
         )
         findings = [pair[0] for pair in evaluated]
-        patch = "".join(pair[1] for pair in evaluated if pair[0]["fixable"])
+        patch = "".join(pair[1] for pair in evaluated)
         error_count = sum(item["severity"] == "error" for item in findings)
         blocked = error_count > 0 if fail_on == "error" else bool(findings)
         status = "FAIL" if blocked else ("WARNING" if findings else "PASS")
-        result = {
-            "version": RESULT_VERSION,
-            "status": status,
-            "findings": findings,
-            "patch": patch,
-        }
-        if len(canonical_bytes(result)) > MAX_OUTPUT:
+        result = {"status": status, "findings": findings, "patch": patch}
+        if len(patch.encode("utf-8")) > MAX_OUTPUT or len(text_bytes(result)) > MAX_OUTPUT:
             raise EvaluationError(
                 "resource_limit",
-                "successful result exceeds 8388608-byte stdout limit",
+                "result exceeds 8388608-byte output limit",
             )
         return result, 1 if blocked else 0
     except EvaluationError as error:
         return _error_result(error), 2
     finally:
-        for obj in sources.values():
-            try:
-                os.close(obj.fd)
-            except OSError:
-                pass
+        for sources in source_sets:
+            for obj in sources.values():
+                try:
+                    os.close(obj.fd)
+                except OSError:
+                    pass
         if workspace_fd is not None:
             os.close(workspace_fd)
-        if source_fd is not None:
+        for source_fd in source_fds:
             os.close(source_fd)

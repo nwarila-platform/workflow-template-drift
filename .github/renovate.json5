@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>nwarila-platform/pdq-deploy-inventory//.github/renovate.json5"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/check\\.yaml$/"],
+      "datasourceTemplate": "git-refs",
+      "versioningTemplate": "loose",
+      "matchStrings": [
+        "# renovate: datasource=git-refs depName=(?<depName>[^\\s]+) packageName=(?<packageName>[^\\s]+) currentValue=(?<currentValue>[^\\s]+)\\s+uses: [^@\\s]+@(?<currentDigest>[0-9a-f]{40})"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": ["nwarila-platform/**", "NWarila/**"],
+      "minimumReleaseAge": null
+    }
+  ]
+}

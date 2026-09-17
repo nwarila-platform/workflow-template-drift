@@ -1,128 +1,103 @@
 # workflow-template-drift
 
-Workflow container that evaluates a repository (`/workspace`) against its template repository
-(`/source`) per a drift configuration that lives in the template, and emits exactly one canonical
-JSON document on stdout: a `PASS` / `WARNING` / `FAIL` status, per-file findings, and a `patch`
-field containing an aggregate `git apply`-able remediation for every fixable finding (empty when
-no finding is fixable). The checker makes no network calls, uses no token, and performs no
-filesystem writes.
+This container compares one workspace with one or more pinned public template checkouts. It makes
+no network calls or writes, uses only the Python standard library, and returns one aggregate result.
+Targets must be unique and path-disjoint across every template.
 
-Exit codes: `0` = PASS or WARNING, `1` = policy FAIL, `2` = usage, config, source, resource-limit,
-I/O, or internal error (status `ERROR`, no policy verdict). Nothing is ever written to stderr on a
-normal completion.
+Text is the default format. Findings are sorted by path, mode, and template:
 
-## Configuration (`version: 3`)
-
-A check names a `mode` and either one `path` (the same repo-relative path in template and
-repository) or an explicit `source` (template) and `target` (repository). `severity` is optional and
-defaults to `error`. `must_be_absent` takes `path` only. `head_lines_equal` requires `head_lines`
-(1 to 10000). Targets must be unique and path-disjoint: no target may be an ancestor of another.
-A target component that case-insensitively equals `.git` after trailing dots are removed is forbidden.
-
-```json
-{
-  "version": 3,
-  "checks": [
-    {"mode": "bytes_equal", "path": ".github/workflows/security.yaml"},
-    {"mode": "must_exist", "path": ".github/CODEOWNERS"},
-    {"mode": "head_lines_equal", "path": ".editorconfig", "head_lines": 12, "severity": "warning"},
-    {"mode": "must_be_absent", "path": ".github/dependabot.yml"}
-  ]
-}
+```text
+error: path: bytes_equal/content_mismatch (template owner/repo): target content differs from the pinned template
+template-drift: FAIL (1 findings, 1 fixable)
 ```
 
-Only `version: 3` is accepted at runtime. `tools/migrate_manifest.py` converts a `NWarila/drift-gate`
-manifest (`version` `"1"` or `"2"`) offline. For a valid manifest with at least one mechanically
-convertible entry whose targets meet the v3 restrictions above, it prints a candidate `version: 3`
-document to stdout and lists every `scaffold_starter` path that needs a policy decision on stderr. If
-the input is invalid, a convertible target violates those restrictions, there is no mechanically
-convertible entry, or the candidate would exceed the v3 limit of 4096 checks or 1 MiB of config bytes,
-it exits `2` and prints no stdout. The no-entry error reports that it cannot produce a valid nonempty
-`checks` array. The converter writes no files and is not part of the image.
+The final line is `template-drift: PASS`, `template-drift: WARNING (<n> findings)`, or
+`template-drift: FAIL (<n> findings, <m> fixable)`. A tool error writes only
+`template-drift: error: <code>: <message> (<path>)` to stderr. Exit 0 means pass or warning, exit 1
+means policy failure, and exit 2 means a usage, configuration, resource, or I/O error.
+`--format patch` prints only the aggregate `git apply`-able patch and is empty when no fix is possible.
+Each repeatable source argument is `--template owner/repo=dir`; labels are explicit output metadata.
+With `--fail-on error`, WARNING findings still appear and annotate but do not fail the gate.
 
-## Result
-
-One JSON document per run. Success: `{"version": 1, "status": "PASS"|"WARNING"|"FAIL",
-"findings": [{"target", "mode", "severity", "kind", "fixable", "details"}, …], "patch": "…"}`.
-Error: `{"version": 1, "status": "ERROR", "error": {"code", "message"[, "path"]}}`. Findings are
-sorted by `target` then `mode`; the document is at most 8,388,608 bytes and ends with one newline.
-
-Limits: config file 1 MiB, JSON depth 32, 4096 checks, 64 MiB per file, 512 MiB read in total.
-Exceeding any limit is an `ERROR` with code `resource_limit`.
-
-## Status
-
-The checker, the offline converter, and the evidence harness are implemented. CI runs the 51-test
-corpus on a host and inside the built image for `linux/amd64` and `linux/arm64`, and proves that
-the determinism fixture's checker result is byte-identical on every path.
-
-## Publication
-
-Pushing a signed tag `vX.Y.Z` whose version equals the `VERSION` file runs
-`.github/workflows/publish.yaml`. It builds both platforms into one unaliased image index pushed by
-digest to `ghcr.io/nwarila-platform/workflow-template-drift`, attaches one SPDX SBOM per platform,
-signs the index and both children with Sigstore keyless signing, attaches SLSA build level 3
-provenance, verifies all of it anonymously (no registry credential) together with the determinism
-and usage goldens on both platforms, and only then tags the verified digest `:X.Y.Z` and
-`:sha-<commit>`. There is no `latest` tag. A consumer verifies a release with:
-
-```sh
-cosign verify \
-  --certificate-identity "https://github.com/nwarila-platform/workflow-template-drift/.github/workflows/publish.yaml@refs/tags/vX.Y.Z" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/nwarila-platform/workflow-template-drift:X.Y.Z
-slsa-verifier verify-image "ghcr.io/nwarila-platform/workflow-template-drift@$(crane digest ghcr.io/nwarila-platform/workflow-template-drift:X.Y.Z)" \
-  --source-uri github.com/nwarila-platform/workflow-template-drift --source-tag vX.Y.Z
-```
-
-## Use it in a repository
-
-A consumer runs the org reusable workflow and pins the template commit; nothing else is copied into the
-repository. The check context is the caller job key joined with the reusable job name
-(`template-drift / template drift`), which is what a terraform `required_checks` entry names.
+The consumer calls the inherited workflow:
 
 ```yaml
-name: Template drift
+name: Workflow containers
 on:
   pull_request:
   push:
     branches: [main]
 permissions:
   contents: read
+  pull-requests: write
 jobs:
   template-drift:
-    uses: nwarila-platform/.github/.github/workflows/reusable-template-drift.yaml@<40-hex commit>
-    with:
-      template_ref: <40-hex commit of the template repository>
+    uses: nwarila-platform/workflow-template-drift/.github/workflows/check.yaml@<40-hex> # v2.0.0
 ```
 
-The reusable checks out the caller and the pinned template, runs this image by digest with no network,
-no token, and read-only mounts, writes `::error file=` / `::warning file=` annotations for the first
-ten findings, renders up to 200 findings and up to 65,536 patch characters into the job summary, and
-uploads the complete patch as the `template-drift-patch` artifact when it is nonempty. Inputs
-`template_repository` (default `nwarila-platform/.github`),
-`config` (default `template-drift.json`, relative to the template), and `fail_on` (default `error`) are
-optional. The default template carries the org's ADR mirror policy, converted from its drift-gate
-manifest with `tools/migrate_manifest.py`.
-
-Locally, `tools/template-drift.sh --template <owner/repo> --ref <40-hex> [--config …] [--fail-on …]`
-runs the same image (Podman or Docker) as the invoking user against the current directory, caches the
-template checkout under `${XDG_CACHE_HOME:-$HOME/.cache}/template-drift/`, prints the JSON result,
-and writes a nonempty patch to `./template-drift.patch`. It never changes permissions in the current
-tree, which need not be readable by the image's UID 65532. The Docker path assumes a local rootful
-daemon without `userns-remap`; a remapped daemon requires bind-mount ownership to be arranged for
-its subordinate IDs. As a pre-commit hook, select a revision that contains both the hook manifest
-and helper:
+The checker repository wraps the generic org runner:
 
 ```yaml
-- repo: https://github.com/nwarila-platform/workflow-template-drift
-  rev: <40-hex commit containing the template-drift hook>
-  hooks:
-    - id: template-drift
-      args: ["--template", "nwarila-platform/.github", "--ref", "<40-hex commit>"]
+jobs:
+  run:
+    uses: nwarila-platform/.github/.github/workflows/run-container.yaml@<40-hex>
+    permissions: {contents: read, pull-requests: write}
+    with:
+      name: template-drift
+      version: 2.0.0
 ```
 
-## Run the harness on a host (Python 3.12, git)
+Consumers declare trusted templates and immutable inputs:
+
+```yaml
+templates:
+  - nwarila-platform/.github
+  - NWarila/terraform-framework-template
+```
+
+```text
+nwarila-platform/.github 213fd21563f8111abe77e589b6bd75323e608ab1
+NWarila/terraform-framework-template <40-hex>
+```
+
+The lock omits the consumer's own repository. On pull requests, CI takes identity and template names
+from the protected base and only OIDs from the head lock. CI verifies release-tag signatures, uses the
+reported digest, validates reachability and non-rewind, then runs without network and with read-only mounts.
+An ownerless identity item such as `.github` resolves under the consumer repository's own organization.
+Onboard with two PRs: land identity plus lock first, then add the inherited-workflow call in a second PR.
+
+`tools/template-drift.sh check [--fail-on error|warning]` checks the current repository.
+`tools/template-drift.sh sync [--fail-on error|warning]` resolves template default-branch heads, applies
+the exact patch unstaged, and rewrites the lock. The helper caches exact OIDs and supports Podman or Docker.
+Its image reference is a release tag; signature-verified CI is the authority for the immutable digest.
+If patch application fails after a pre-check, first correct the underlying I/O or permission failure.
+For each path from `git apply --numstat -z "$recovery_patch"`, run the first two commands; after all paths, run the final two:
+
+```sh
+git apply -R --check --include="$path" "$recovery_patch"
+git apply -R --include="$path" "$recovery_patch" # only after that path's check succeeds
+git status --short -- <paths>
+rm -rf -- "$(dirname "$recovery_patch")"
+```
+
+The checked path-wise reverse restores completely applied additions, deletions, and modifications while
+skipping untouched later paths; inspect the status before removing the retained run-temporary directory.
+
+The `template-drift` pre-commit hook runs at pre-push. `template-drift-sync` is manual. A consumer copies
+both entries into `.pre-commit-config.yaml` once and may then run:
+
+```sh
+pre-commit run template-drift --all-files --hook-stage pre-push
+pre-commit run template-drift-sync --all-files --hook-stage manual
+```
+
+A successful sync that changes files intentionally leaves them unstaged, so pre-commit reports
+`files were modified by this hook` and exits 1; inspect and commit those changes normally.
+
+Pushing a signed `vX.Y.Z` tag matching `VERSION` retains the existing multi-platform publish, SBOM,
+provenance, and keyless signing workflow. There is no `latest` tag.
+
+Run the host harness without package installation:
 
 ```sh
 python3.12 -m venv --without-pip .runtime
@@ -130,15 +105,6 @@ ln -s ../../../../workflow_template_drift .runtime/lib/python3.12/site-packages/
 PATH="$PWD/.runtime/bin:$PATH" python3.12 -B -m unittest discover -s . -t . -v
 ```
 
-## Build and run inside the image (`docker` or `podman`)
-
-```sh
-docker build --file Containerfile --tag workflow-template-drift:local .
-docker run --rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-  -v "$PWD/fixtures/determinism/workspace:/workspace:ro" \
-  -v "$PWD/fixtures/determinism/source:/source:ro" \
-  workflow-template-drift:local \
-  --workspace /workspace --source /source --config drift.json --fail-on error --format json
-```
-
-The mounted trees must be readable by UID 65532; a checkout made with a 007 umask is not.
+The custom evaluator remains necessary because Git and rsync do not combine absence/existence/head-line
+policies, bounded no-follow reads, multi-template target collision checks, and one deterministic patch.
+The helper composes maintained Git, Python, Podman/Docker, and pre-commit around the identity/lock protocol.

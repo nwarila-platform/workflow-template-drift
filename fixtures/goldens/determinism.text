@@ -1,0 +1,2 @@
+error: consumer/file.txt: bytes_equal/content_mismatch (template example/determinism): target content differs from the pinned template
+template-drift: FAIL (1 findings, 1 fixable)
