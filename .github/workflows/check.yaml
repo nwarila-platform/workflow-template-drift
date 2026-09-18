@@ -4,10 +4,10 @@ on:
 jobs:
   run:
     # renovate: datasource=git-refs depName=nwarila-platform/.github packageName=https://github.com/nwarila-platform/.github.git currentValue=main
-    uses: nwarila-platform/.github/.github/workflows/run-container.yaml@02e86bfc0da31ad95718996e05cf376a3d6c30c4
+    uses: nwarila-platform/.github/.github/workflows/run-container.yaml@49b9084988d2bb64d14f0ed2a81453a3435b935d
     permissions:
       contents: read
       pull-requests: write
     with:
       name: template-drift
-      version: 2.0.0
+      version: 2.1.0

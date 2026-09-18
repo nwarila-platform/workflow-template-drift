@@ -8,11 +8,11 @@ Text is the default format. Findings are sorted by path, mode, and template:
 
 ```text
 error: path: bytes_equal/content_mismatch (template owner/repo): target content differs from the pinned template
-template-drift: FAIL (1 findings, 1 fixable)
+template-drift: FAIL (1 template, 1 check, 1 error, 0 warnings, 1 fixable)
 ```
 
-The final line is `template-drift: PASS`, `template-drift: WARNING (<n> findings)`, or
-`template-drift: FAIL (<n> findings, <m> fixable)`. A tool error writes only
+The final line is `template-drift: PASS (<T> templates, <C> checks, 0 errors, 0 warnings)`,
+`template-drift: WARNING (<T> templates, <C> checks, <E> errors, <W> warnings)`, or `template-drift: FAIL (<T> templates, <C> checks, <E> errors, <W> warnings, <F> fixable)`; count nouns are singular only for 1. A tool error writes only
 `template-drift: error: <code>: <message> (<path>)` to stderr. Exit 0 means pass or warning, exit 1
 means policy failure, and exit 2 means a usage, configuration, resource, or I/O error.
 `--format patch` prints only the aggregate `git apply`-able patch and is empty when no fix is possible.
@@ -32,7 +32,7 @@ permissions:
   pull-requests: write
 jobs:
   template-drift:
-    uses: nwarila-platform/workflow-template-drift/.github/workflows/check.yaml@<40-hex> # v2.0.0
+    uses: nwarila-platform/workflow-template-drift/.github/workflows/check.yaml@<40-hex> # v2.1.0
 ```
 
 The checker repository wraps the generic org runner:
@@ -44,7 +44,7 @@ jobs:
     permissions: {contents: read, pull-requests: write}
     with:
       name: template-drift
-      version: 2.0.0
+      version: 2.1.0
 ```
 
 Consumers declare trusted templates and immutable inputs:

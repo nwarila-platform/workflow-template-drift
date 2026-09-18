@@ -628,6 +628,7 @@ MESSAGES: dict[str, str] = {
     "target_too_short": "target has fewer than the required head lines",
     "target_present": "target must be absent",
 }
+def _counted(count: int, noun: str) -> str: return f"{count} {noun}{'' if count == 1 else 's'}"
 def text_bytes(result: dict[str, Any]) -> bytes:
     """Render the fixed problem-matcher grammar."""
     findings = result["findings"]
@@ -636,18 +637,18 @@ def text_bytes(result: dict[str, Any]) -> bytes:
         f"(template {item['template']}): {MESSAGES[item['kind']]}\n"
         for item in findings
     ]
+    errors = sum(item["severity"] == "error" for item in findings); warnings = len(findings) - errors
+    fixable = sum(item["fixable"] for item in findings); counts = f"{_counted(result['templates'], 'template')}, {_counted(result['checks'], 'check')}"
     if result["status"] == "PASS":
-        lines.append("template-drift: PASS\n")
+        lines.append(f"template-drift: PASS ({counts}, 0 errors, 0 warnings)\n")
     elif result["status"] == "WARNING":
-        lines.append(f"template-drift: WARNING ({len(findings)} findings)\n")
+        lines.append(f"template-drift: WARNING ({counts}, {_counted(errors, 'error')}, {_counted(warnings, 'warning')})\n")
     else:
-        fixable = sum(item["fixable"] for item in findings)
-        lines.append(f"template-drift: FAIL ({len(findings)} findings, {fixable} fixable)\n")
+        lines.append(f"template-drift: FAIL ({counts}, {_counted(errors, 'error')}, {_counted(warnings, 'warning')}, {fixable} fixable)\n")
     return "".join(lines).encode("utf-8")
 def patch_bytes(result: dict[str, Any]) -> bytes:
     """Render the aggregate git patch."""
     return result["patch"].encode("utf-8")
-
 
 def error_bytes(result: dict[str, Any]) -> bytes:
     error = result["error"]
@@ -705,7 +706,7 @@ def evaluate(
         error_count = sum(item["severity"] == "error" for item in findings)
         blocked = error_count > 0 if fail_on == "error" else bool(findings)
         status = "FAIL" if blocked else ("WARNING" if findings else "PASS")
-        result = {"status": status, "findings": findings, "patch": patch}
+        result = {"status": status, "findings": findings, "patch": patch, "templates": len(template_roots), "checks": len(checks)}
         if len(patch.encode("utf-8")) > MAX_OUTPUT or len(text_bytes(result)) > MAX_OUTPUT:
             raise EvaluationError(
                 "resource_limit",
