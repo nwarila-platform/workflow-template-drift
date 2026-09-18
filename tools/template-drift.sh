@@ -102,7 +102,7 @@ if command -v podman >/dev/null 2>&1; then runtime=podman; user_args=(--userns=k
 elif command -v docker >/dev/null 2>&1; then runtime=docker; user_args=(--user "$(id -u):$(id -g)");
 else die 'podman or docker is required'; fi
 # The local helper uses the release tag; signature-verified CI is the authority for its immutable digest.
-image=ghcr.io/nwarila-platform/workflow-template-drift:2.0.0
+image=ghcr.io/nwarila-platform/workflow-template-drift:2.1.0
 "$runtime" pull --quiet "$image" >/dev/null || die 'image pull failed'
 format='text'; [[ "$command_name" == sync ]] && format='patch'
 status=0

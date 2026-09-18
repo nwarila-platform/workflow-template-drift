@@ -10,7 +10,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ["python3.12", "-I", "-X", "utf8", "-B", "-m", "workflow_template_drift"]
 FINDING = re.compile(r"^(error|warning): ([^:]+?): ([a-z_]+)/([a-z_]+) \(template ([^)]+)\): (.*)$")
-SUMMARY = re.compile(r"^template-drift: (PASS|WARNING|FAIL)(?: \((\d+) findings(?:, (\d+) fixable)?\))?$")
+SUMMARY = re.compile(r"^template-drift: (PASS|WARNING|FAIL) \((\d+) (templates?), (\d+) (checks?), (\d+) (errors?), (\d+) (warnings?)(?:, (\d+) fixable)?\)$")
 ERROR = re.compile(r"^template-drift: error: ([a-z_]+): (.*?)(?: \(([^()]*)\))?$")
 
 def check(mode: str, **fields: object) -> dict[str, object]:
@@ -46,6 +46,9 @@ def decoded(test: unittest.TestCase, completed: subprocess.CompletedProcess[byte
     lines = completed.stdout.decode().splitlines()
     summary = SUMMARY.fullmatch(lines[-1])
     test.assertIsNotNone(summary, completed.stdout)
+    assert summary
+    for count_group, noun_group in ((2, 3), (4, 5), (6, 7), (8, 9)):
+        test.assertEqual(summary.group(noun_group).endswith("s"), int(summary.group(count_group)) != 1)
     findings = []
     for line in lines[:-1]:
         match = FINDING.fullmatch(line)
@@ -54,8 +57,9 @@ def decoded(test: unittest.TestCase, completed: subprocess.CompletedProcess[byte
         severity, path, mode, kind, template, message = match.groups()
         findings.append({"severity": severity, "path": path, "mode": mode, "kind": kind,
                          "template": template, "message": message})
-    return {"status": summary.group(1), "findings": findings,
-            "count": int(summary.group(2) or 0), "fixable": int(summary.group(3) or 0)}
+    return {"status": summary.group(1), "findings": findings, "templates": int(summary.group(2)),
+            "checks": int(summary.group(4)), "errors": int(summary.group(6)),
+            "warnings": int(summary.group(8)), "fixable": int(summary.group(10) or 0)}
 
 class CliCase(unittest.TestCase):
     def setUp(self) -> None:

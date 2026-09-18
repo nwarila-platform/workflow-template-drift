@@ -20,7 +20,8 @@ class EngineBehaviorTests(CliCase):
         for path, data in {"t/a": b"old\n", "t/head": b"one\nwrong\ntail\n", "t/old": b"remove\n"}.items():
             self.put(self.workspace, path, data)
         result = self.result()
-        self.assertEqual((self.invoke().returncode, result["status"], result["count"], result["fixable"]), (1, "FAIL", 4, 4))
+        self.assertEqual((self.invoke().returncode, result["status"], result["errors"], result["warnings"], result["fixable"]),
+                         (1, "FAIL", 3, 1, 4))
         self.assertEqual({f["mode"] for f in result["findings"]}, {"bytes_equal", "must_exist", "head_lines_equal", "must_be_absent"})
         patch = self.invoke(output="patch")
         self.assertEqual((patch.returncode, patch.stderr), (1, b""))
@@ -34,6 +35,12 @@ class EngineBehaviorTests(CliCase):
         self.assertEqual((self.invoke().returncode, self.result()["status"]), (0, "WARNING"))
         warning = self.invoke(fail_on="warning")
         self.assertEqual((warning.returncode, self.result(warning)["status"]), (1, "FAIL"))
+        with self.subTest(summary="singular count nouns"):
+            self.configure([check("must_exist", source="desired", target="missing")])
+            self.put(self.template, "desired", b"create\n")
+            singular = self.invoke()
+            self.assertEqual((singular.returncode, singular.stderr, singular.stdout.splitlines()[-1]),
+                             (1, b"", b"template-drift: FAIL (1 template, 1 check, 1 error, 0 warnings, 1 fixable)"))
 
     def test_multi_template_sort_and_disjointness(self) -> None:
         second = self.root / "template-two"; second.mkdir()
