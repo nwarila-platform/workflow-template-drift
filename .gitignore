@@ -15,8 +15,12 @@
 # Git does not descend into an excluded directory, so every directory on the path to an
 # allowed file is re-included by name. This publishes no files by itself.
 !/.github/
+!/.github/.config/
 !/.github/renovate.json5
 !/.github/workflows/
+!/docs/
+!/docs/decision-records/
+!/docs/decision-records/org/
 !/fixtures/
 !/fixtures/determinism/
 !/fixtures/determinism/source/
@@ -30,6 +34,8 @@
 
 # --- [ allowed: repository configuration ] -------------------------------------------------- #
 !/.dockerignore
+!/.editorconfig
+!/.gitattributes
 !/.gitignore
 !/.pre-commit-hooks.yaml
 
@@ -37,13 +43,21 @@
 !/LICENSE
 !/README.md
 !/SECURITY.md
-!/THIRD_PARTY_NOTICES.md
+!/docs/decision-records/org/.gitkeep
+!/docs/decision-records/org/0001-use-architecture-decision-records.md
+!/docs/decision-records/org/0002-adopt-diataxis-documentation-framework.md
+!/docs/decision-records/org/0003-use-deny-all-gitignore-strategy.md
+!/docs/decision-records/org/0004-use-renovate-for-dependency-updates.md
+!/docs/decision-records/org/0005-keep-github-control-planes-namespace-local.md
 
 # --- [ allowed: GitHub configuration ] ------------------------------------------------------ #
 !/.github/CODEOWNERS
+!/.github/.config/template-drift.yaml
+!/.github/.config/template-drift.lock
 !/.github/workflows/ci.yaml
 !/.github/workflows/check.yaml
 !/.github/workflows/publish.yaml
+!/.github/workflows/workflow-containers.yaml
 
 # --- [ allowed: the checker ] --------------------------------------------------------------- #
 !/Containerfile
@@ -54,10 +68,13 @@
 # --- [ allowed: the publish pipeline's pinned registry client and the release version ] ----- #
 !/tools/install-crane.sh
 !/tools/template-drift.sh
+!/tools/workflow-container.sh
 !/VERSION
 
 # --- [ allowed: the evidence harness ] ------------------------------------------------------ #
 !/tests/__init__.py
+!/tests/host.sh
+!/tests/image.sh
 !/tests/support.py
 !/tests/test_determinism.py
 !/tests/test_engine.py

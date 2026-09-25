@@ -1,5 +1,6 @@
-# Purpose: prove that the checker tree and built image behave identically on both release architectures.
-# Role: PR and main-push gate.
+# Purpose: prove that the checker source and the built image behave identically on both release architectures.
+# Role: PR and main-push gate. Governed byte for byte by workflow-container-template; the container's own
+# tests live in tests/host.sh and tests/image.sh, which publish.yaml also runs before promotion.
 
 name: CI
 on:
@@ -12,8 +13,8 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
-  host-harness:
-    name: host harness (spike replay)
+  host:
+    name: host harness
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -26,26 +27,16 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-      - name: Release consistency
+      - name: Name and release binding
         run: |
           set -euo pipefail
-          version=$(cat VERSION)
-          test "$version" = 2.1.0
-          grep -Fqx "__version__ = \"${version}\"" workflow_template_drift/__init__.py
-          grep -Fqx "    uses: nwarila-platform/.github/.github/workflows/run-container.yaml@49b9084988d2bb64d14f0ed2a81453a3435b935d" .github/workflows/check.yaml
-          grep -Fqx "      version: ${version}" .github/workflows/check.yaml
-          grep -Fqx "image=ghcr.io/nwarila-platform/workflow-template-drift:${version}" tools/template-drift.sh
-          grep -Fqx "    uses: nwarila-platform/workflow-template-drift/.github/workflows/check.yaml@<40-hex> # v${version}" README.md
-          grep -Fqx "      version: ${version}" README.md
-          test "$(git ls-files -s tools/template-drift.sh | cut -c1-6)" = 100755
-      - name: Harness
-        run: |
-          set -euo pipefail
-          python3.12 -m venv --without-pip .runtime
-          ln -s ../../../../workflow_template_drift .runtime/lib/python3.12/site-packages/workflow_template_drift
-          PATH="$PWD/.runtime/bin:$PATH" python3.12 -B -m unittest discover -s . -t . -v 2>&1 | tee .runtime/unittest.output
-          grep -q '^Ran 18 tests' .runtime/unittest.output
-          grep -q '^OK$' .runtime/unittest.output
+          # The repository name is the container's name: check.yaml must declare the same one.
+          name=$(sed -n 's/^      name: \([a-z0-9-]*\)$/\1/p' .github/workflows/check.yaml)
+          test "workflow-${name}" = "${GITHUB_REPOSITORY#*/}"
+          [[ "$(cat VERSION)" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$(git ls-files -s tools/workflow-container.sh | cut -c1-6)" = 100755
+      - name: Host tests
+        run: bash tests/host.sh
   image-parity:
     name: image parity (${{ matrix.arch }})
     runs-on: ubuntu-24.04
@@ -76,23 +67,11 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           BUILDER: ${{ steps.buildx.outputs.name }}
-        run: docker buildx build --builder "$BUILDER" --file Containerfile --platform "linux/$ARCH" --tag "workflow-template-drift:ci-$ARCH" --load .
-      - name: Image identity and ABI
+        run: docker buildx build --builder "$BUILDER" --file Containerfile --platform "linux/$ARCH" --tag "workflow-container:ci-$ARCH" --load .
+      - name: Image tests
         env:
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          image="workflow-template-drift:ci-$ARCH"
-          test "$(docker image inspect "$image" --format '{{.Config.User}} {{json .Config.Entrypoint}}')" = '65532:65532 ["/usr/bin/python3.12","-I","-X","utf8","-B","-m","workflow_template_drift"]'
-          status=0
-          docker run --rm --platform "linux/$ARCH" --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-            -v "$PWD/fixtures/determinism/workspace:/workspace:ro" -v "$PWD/fixtures/determinism/source:/template:ro" "$image" \
-            --workspace /workspace --template example/determinism=/template --config drift.json --format text >actual.text || status=$?
-          test "$status" -eq 1
-          cmp actual.text fixtures/goldens/determinism.text
-          status=0
-          docker run --rm --platform "linux/$ARCH" --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-            -v "$PWD/fixtures/determinism/workspace:/workspace:ro" -v "$PWD/fixtures/determinism/source:/template:ro" "$image" \
-            --workspace /workspace --template example/determinism=/template --config drift.json --format patch >actual.patch || status=$?
-          test "$status" -eq 1
-          cmp actual.patch fixtures/goldens/determinism.patch
+          test "$(docker image inspect "workflow-container:ci-$ARCH" --format '{{.Config.User}}')" = 65532:65532
+          bash tests/image.sh "workflow-container:ci-$ARCH" "linux/$ARCH"
