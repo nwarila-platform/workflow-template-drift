@@ -1,7 +1,9 @@
 # Purpose: build an unaliased release candidate, bind evidence to its digest, verify anonymously, then promote.
-# Role: protected-tag publisher.
+# Role: protected-tag publisher. Governed byte for byte by workflow-container-template: nothing in it names
+# the container. The image, signing identity and provenance source derive from the repository, and the
+# container's own runtime checks live in tests/image.sh.
 
-name: Publish workflow-template-drift
+name: Publish
 
 on:
   push:
@@ -10,10 +12,10 @@ on:
 permissions:
   contents: read
 
-concurrency: {group: publish-ghcr-io-nwarila-platform-workflow-template-drift, cancel-in-progress: false}
+concurrency: {group: 'publish-${{ github.repository }}', cancel-in-progress: false}
 
 env:
-  IMAGE_REPOSITORY: ghcr.io/nwarila-platform/workflow-template-drift
+  IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
   SOURCE_DATE_EPOCH: "1704067200"
   SLSA_GENERATOR_TAG: "v2.1.0"
   SLSA_GENERATOR_TAG_SHA: "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"
@@ -25,7 +27,7 @@ jobs:
   generator-pin:
     name: Release and SLSA tag integrity
     if: >-
-      ${{ github.repository == 'nwarila-platform/workflow-template-drift' &&
+      ${{ github.repository_owner == 'nwarila-platform' && github.repository != 'nwarila-platform/workflow-container-template' &&
       github.event_name == 'push' &&
       startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-24.04
@@ -73,7 +75,7 @@ jobs:
     name: Publish unaliased candidate by digest
     needs: [generator-pin]
     if: >-
-      ${{ github.repository == 'nwarila-platform/workflow-template-drift' &&
+      ${{ github.repository_owner == 'nwarila-platform' && github.repository != 'nwarila-platform/workflow-container-template' &&
       github.event_name == 'push' &&
       startsWith(github.ref, 'refs/tags/v') &&
       needs.generator-pin.result == 'success' }}
@@ -136,8 +138,9 @@ jobs:
               raise SystemExit("VERSION must be ASCII") from error
           if re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version) is None:
               raise SystemExit(f"VERSION is not strict X.Y.Z: {version!r}")
-          if repository != "nwarila-platform/workflow-template-drift":
-              raise SystemExit(f"wrong publishing repository: {repository!r}")
+          name = repository.removeprefix("nwarila-platform/workflow-")
+          if name == repository or len(name) > 91 or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) is None:
+              raise SystemExit(f"not an organization workflow-container repository: {repository!r}")
           if ref != f"refs/tags/v{version}":
               raise SystemExit(f"release ref mismatch: expected refs/tags/v{version}, observed {ref}")
           if re.fullmatch(r"[0-9a-f]{40}", sha) is None:
@@ -309,7 +312,7 @@ jobs:
     name: Sign candidate index and children
     needs: [publish-candidate]
     if: >-
-      ${{ github.repository == 'nwarila-platform/workflow-template-drift' &&
+      ${{ github.repository_owner == 'nwarila-platform' && github.repository != 'nwarila-platform/workflow-container-template' &&
       github.event_name == 'push' &&
       startsWith(github.ref, 'refs/tags/v') &&
       needs.publish-candidate.result == 'success' }}
@@ -341,7 +344,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${INDEX_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          expected_identity="https://github.com/nwarila-platform/workflow-template-drift/.github/workflows/publish.yaml@${GITHUB_REF}"
+          expected_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yaml@${GITHUB_REF}"
           expected_ref="refs/tags/v$(printf '%s' "${GITHUB_REF_NAME}" | sed 's/^v//')"
           test "${GITHUB_REF}" = "${expected_ref}"
           printf 'expected keyless certificate identity: %s\n' "${expected_identity}"
@@ -351,7 +354,7 @@ jobs:
     name: SLSA L3 provenance
     needs: [generator-pin, publish-candidate]
     if: >-
-      ${{ github.repository == 'nwarila-platform/workflow-template-drift' &&
+      ${{ github.repository_owner == 'nwarila-platform' && github.repository != 'nwarila-platform/workflow-container-template' &&
       github.event_name == 'push' &&
       startsWith(github.ref, 'refs/tags/v') &&
       needs.generator-pin.result == 'success' &&
@@ -372,7 +375,7 @@ jobs:
     name: Anonymous evidence and runtime verification
     needs: [publish-candidate, sign, slsa]
     if: >-
-      ${{ github.repository == 'nwarila-platform/workflow-template-drift' &&
+      ${{ github.repository_owner == 'nwarila-platform' && github.repository != 'nwarila-platform/workflow-container-template' &&
       github.event_name == 'push' &&
       startsWith(github.ref, 'refs/tags/v') &&
       needs.publish-candidate.result == 'success' &&
@@ -419,7 +422,7 @@ jobs:
       - name: Create fresh empty Docker configuration
         run: |
           set -euo pipefail
-          anonymous_config="${RUNNER_TEMP}/wtd2-anonymous-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          anonymous_config="${RUNNER_TEMP}/anonymous-docker-config-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           test ! -e "${anonymous_config}"
           install -d -m 0700 "${anonymous_config}"
           test -z "$(find "${anonymous_config}" -mindepth 1 -maxdepth 1 -print -quit)"
@@ -527,7 +530,7 @@ jobs:
           set -euo pipefail
           test ! -e "${DOCKER_CONFIG}/config.json"
           version="$(tr -d '[:space:]' < VERSION)"
-          certificate_identity="https://github.com/nwarila-platform/workflow-template-drift/.github/workflows/publish.yaml@refs/tags/v${version}"
+          certificate_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish.yaml@refs/tags/v${version}"
           mapfile -t children < <(awk '{print $2}' dist/verify/platform-records)
           test "${#children[@]}" -eq 2
           for digest in "${INDEX_DIGEST}" "${children[@]}"; do
@@ -549,89 +552,17 @@ jobs:
           version="$(tr -d '[:space:]' < VERSION)"
           test "${GITHUB_REF}" = "refs/tags/v${version}"
           slsa-verifier verify-image "${IMAGE_REPOSITORY}@${INDEX_DIGEST}" \
-            --source-uri github.com/nwarila-platform/workflow-template-drift \
+            --source-uri "github.com/${GITHUB_REPOSITORY}" \
             --source-tag "v${version}" \
             --builder-id "${SLSA_BUILDER_ID}" \
             --print-provenance > dist/verify/provenance.json
           test -s dist/verify/provenance.json
-      - name: Run determinism golden and exact usage path on both platforms
+      - name: Run the container's image tests on each published child
         run: |
           set -euo pipefail
           test ! -e "${DOCKER_CONFIG}/config.json"
-          report_failure() {
-            local arch="$1"
-            local oracle="$2"
-            local status="$3"
-            local stderr_path="$4"
-            printf 'runtime verification failed: arch=%s oracle=%s observed_status=%s\n' \
-              "${arch}" "${oracle}" "${status}" >&2
-            printf 'stderr (first 4096 bytes from %s):\n' "${stderr_path}" >&2
-            if [[ -f "${stderr_path}" ]]; then
-              head -c 4096 -- "${stderr_path}" >&2 || true
-              printf '\n' >&2
-            else
-              printf '<missing>\n' >&2
-            fi
-            exit 1
-          }
-
-          printf '%s\n' 'template-drift: error: invalid_usage: invalid command-line arguments' \
-            > dist/verify/usage.expected
-
           while read -r arch child_digest _; do
-            text_stdout="dist/verify/golden-${arch}.text.stdout"
-            text_stderr="dist/verify/golden-${arch}.text.stderr"
-            status=0
-            docker run --quiet --rm --platform "linux/${arch}" --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-              -v "$PWD/fixtures/determinism/workspace:/workspace:ro" \
-              -v "$PWD/fixtures/determinism/source:/template:ro" \
-              "${IMAGE_REPOSITORY}@${child_digest}" \
-              --workspace /workspace --template example/determinism=/template --config drift.json --fail-on error --format text \
-              > "${text_stdout}" 2> "${text_stderr}" || status=$?
-            if [[ "${status}" -ne 1 ]]; then
-              report_failure "${arch}" "text-exit" "${status}" "${text_stderr}"
-            fi
-            if [[ -s "${text_stderr}" ]]; then
-              report_failure "${arch}" "text-stderr" "${status}" "${text_stderr}"
-            fi
-            if ! cmp -s "${text_stdout}" fixtures/goldens/determinism.text; then
-              report_failure "${arch}" "text-bytes" "${status}" "${text_stderr}"
-            fi
-
-            patch_stdout="dist/verify/golden-${arch}.patch.stdout"
-            patch_stderr="dist/verify/golden-${arch}.patch.stderr"
-            status=0
-            docker run --quiet --rm --platform "linux/${arch}" --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-              -v "$PWD/fixtures/determinism/workspace:/workspace:ro" \
-              -v "$PWD/fixtures/determinism/source:/template:ro" \
-              "${IMAGE_REPOSITORY}@${child_digest}" \
-              --workspace /workspace --template example/determinism=/template --config drift.json --fail-on error --format patch \
-              > "${patch_stdout}" 2> "${patch_stderr}" || status=$?
-            if [[ "${status}" -ne 1 ]]; then
-              report_failure "${arch}" "patch-exit" "${status}" "${patch_stderr}"
-            fi
-            if [[ -s "${patch_stderr}" ]]; then
-              report_failure "${arch}" "patch-stderr" "${status}" "${patch_stderr}"
-            fi
-            if ! cmp -s "${patch_stdout}" fixtures/goldens/determinism.patch; then
-              report_failure "${arch}" "patch-bytes" "${status}" "${patch_stderr}"
-            fi
-
-            usage_stdout="dist/verify/usage-${arch}.stdout"
-            usage_stderr="dist/verify/usage-${arch}.stderr"
-            status=0
-            docker run --quiet --rm --platform "linux/${arch}" --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-              "${IMAGE_REPOSITORY}@${child_digest}" \
-              > "${usage_stdout}" 2> "${usage_stderr}" || status=$?
-            if [[ "${status}" -ne 2 ]]; then
-              report_failure "${arch}" "usage-exit" "${status}" "${usage_stderr}"
-            fi
-            if [[ -s "${usage_stdout}" ]]; then
-              report_failure "${arch}" "usage-stdout" "${status}" "${usage_stderr}"
-            fi
-            if ! cmp -s "${usage_stderr}" dist/verify/usage.expected; then
-              report_failure "${arch}" "usage-stderr" "${status}" "${usage_stderr}"
-            fi
+            bash tests/image.sh "${IMAGE_REPOSITORY}@${child_digest}" "linux/${arch}"
             printf 'runtime verification passed: arch=%s child=%s\n' "${arch}" "${child_digest}"
           done < dist/verify/platform-records
 
@@ -639,7 +570,7 @@ jobs:
     name: Promote verified digest to consumer tags
     needs: [publish-candidate, verify]
     if: >-
-      ${{ github.repository == 'nwarila-platform/workflow-template-drift' &&
+      ${{ github.repository_owner == 'nwarila-platform' && github.repository != 'nwarila-platform/workflow-container-template' &&
       github.event_name == 'push' &&
       startsWith(github.ref, 'refs/tags/v') &&
       needs.publish-candidate.result == 'success' &&
@@ -680,7 +611,7 @@ jobs:
           [[ "${version}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           [[ "${GITHUB_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${INDEX_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          test "${GITHUB_REPOSITORY}" = nwarila-platform/workflow-template-drift
+          [[ "${GITHUB_REPOSITORY}" =~ ^nwarila-platform/workflow-[a-z0-9]+(-[a-z0-9]+)*$ ]]
           test "${GITHUB_REF}" = "refs/tags/v${version}"
           test "$(git cat-file -t "${GITHUB_SHA}")" = commit
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
