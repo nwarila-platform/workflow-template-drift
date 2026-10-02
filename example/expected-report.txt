@@ -1,0 +1,4 @@
+warning: SECURITY.md: must_exist/target_missing (template example/template): target is missing
+error: legacy.cfg: must_be_absent/target_present (template example/template): target must be absent
+error: lint.toml: bytes_equal/content_mismatch (template example/template): target content differs from the pinned template
+template-drift: FAIL (1 template, 5 checks, 2 errors, 1 warning)

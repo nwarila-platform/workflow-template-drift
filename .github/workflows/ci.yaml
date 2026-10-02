@@ -1,6 +1,6 @@
 # Purpose: prove that the checker source and the built image behave identically on both release architectures.
-# Role: PR and main-push gate. Governed byte for byte by workflow-container-template; the container's own
-# tests live in tests/host.sh and tests/image.sh, which publish.yaml also runs before promotion.
+# Role: PR and main-push gate. Nothing in it names the container: the container's own tests live in
+# tests/host.sh and tests/image.sh, and publish.yaml runs the image tests again before it promotes a release.
 
 name: CI
 on:
@@ -34,7 +34,6 @@ jobs:
           name=$(sed -n 's/^      name: \([a-z0-9-]*\)$/\1/p' .github/workflows/check.yaml)
           test "workflow-${name}" = "${GITHUB_REPOSITORY#*/}"
           [[ "$(cat VERSION)" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          test "$(git ls-files -s tools/workflow-container.sh | cut -c1-6)" = 100755
       - name: Host tests
         run: bash tests/host.sh
   image-parity:

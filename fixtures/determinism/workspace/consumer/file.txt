@@ -1,2 +1,0 @@
-actual é
-::error::consumer

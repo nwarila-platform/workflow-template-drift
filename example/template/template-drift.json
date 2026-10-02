@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "checks": [
+    {"mode": "bytes_equal", "path": "lint.toml"},
+    {"mode": "head_lines_equal", "path": "pipeline.yaml", "head_lines": 4},
+    {"mode": "must_exist", "path": "CHANGELOG.md"},
+    {"mode": "must_exist", "path": "SECURITY.md", "severity": "warning"},
+    {"mode": "must_be_absent", "path": "legacy.cfg"}
+  ]
+}

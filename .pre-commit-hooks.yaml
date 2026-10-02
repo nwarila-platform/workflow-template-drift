@@ -1,14 +1,8 @@
+# Lets any repository run the check before each push, through https://pre-commit.com.
 - id: template-drift
-  name: workflow template drift
-  entry: tools/template-drift.sh check
+  name: template drift
+  entry: tools/template-drift.sh
   language: script
   pass_filenames: false
   always_run: true
   stages: [pre-push]
-- id: template-drift-sync
-  name: sync workflow template drift
-  entry: tools/template-drift.sh sync
-  language: script
-  pass_filenames: false
-  always_run: true
-  stages: [manual]

@@ -1,4 +1,1 @@
-"""Descriptor-relative workflow template drift evaluator."""
-from .engine import evaluate
-__all__ = ["evaluate"]
-__version__ = "2.1.0"
+"""Report where a repository has drifted from the templates it follows."""

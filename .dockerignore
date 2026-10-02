@@ -1,3 +1,4 @@
+# Only the Python package enters the build context.
 *
 !workflow_template_drift/
 workflow_template_drift/__pycache__/

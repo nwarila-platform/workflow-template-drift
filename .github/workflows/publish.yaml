@@ -1,7 +1,7 @@
 # Purpose: build an unaliased release candidate, bind evidence to its digest, verify anonymously, then promote.
-# Role: protected-tag publisher. Governed byte for byte by workflow-container-template: nothing in it names
-# the container. The image, signing identity and provenance source derive from the repository, and the
-# container's own runtime checks live in tests/image.sh.
+# Role: protected-tag publisher. Nothing in it names the container: the image, signing identity and
+# provenance source derive from the repository, and the container's own runtime checks live in
+# tests/image.sh.
 
 name: Publish
 
