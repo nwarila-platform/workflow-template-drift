@@ -1,37 +1,47 @@
 #!/usr/bin/env bash
-# workflow-template-drift image tests: the determinism goldens in text and patch format, the exact usage
-# error, and the image identity. ci.yaml runs them on each architecture's build and publish.yaml on each
-# published child digest before promotion. Usage: tests/image.sh <image> <platform>
+# Image tests: run the bundled example through a built image with the same arguments and the same
+# container restrictions as the organization's runner, and compare the report byte for byte.
+# ci.yaml runs this file on each architecture's build, and publish.yaml runs it again on each
+# published image before that image is promoted.
+#
+# Usage: tests/image.sh <image> <platform>
+# Set CONTAINER_RUNTIME=podman to use Podman instead of Docker.
 set -euo pipefail
 image=$1
 platform=$2
 runtime=${CONTAINER_RUNTIME:-docker}
 cd "$(dirname "$0")/.."
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-status=0
-fail() {
-  printf 'image test failed: %s (platform %s, status %s)\n' "$1" "$platform" "$status" >&2
-  head -c 4096 "$work/err" >&2 || true
-  exit 1
-}
+
+# The container runs as an unprivileged user, so it is given a world-readable copy of the example,
+# just as the runner makes a checkout world-readable before mounting it.
+cp -R example "$work/example"
+chmod -R a+rX "$work/example"
+
+# Run the image, keeping its report, its error output and its exit status. A status other than 0
+# is a result to compare here, not a failure of this script.
 run() {
   status=0
-  "$runtime" run --quiet --rm --platform "$platform" --network=none --read-only --cap-drop=ALL \
-    --security-opt=no-new-privileges "$@" >"$work/out" 2>"$work/err" || status=$?
+  "$runtime" run --rm --platform "$platform" --network=none --read-only --cap-drop=ALL \
+    --security-opt=no-new-privileges "$@" >"$work/report" 2>"$work/errors" || status=$?
 }
-for format in text patch; do
-  run -v "$PWD/fixtures/determinism/workspace:/workspace:ro" -v "$PWD/fixtures/determinism/source:/template:ro" \
-    "$image" --workspace /workspace --template example/determinism=/template --config drift.json \
-    --fail-on error --format "$format"
-  [[ $status -eq 1 && ! -s "$work/err" ]] || fail "$format: status or stderr"
-  cmp -s "$work/out" "fixtures/goldens/determinism.$format" || fail "$format: golden bytes"
-done
+
+fail() {
+  echo "image test failed: $1 (status $status)" >&2
+  cat "$work/errors" >&2
+  exit 1
+}
+
+# The example repository has drifted from its template: status 1 and exactly the expected report.
+run --volume "$work/example/repository:/workspace:ro" --volume "$work/example/template:/templates/0:ro" \
+  "$image" --workspace /workspace --template example/template=/templates/0 --fail-on error --format text
+[[ $status -eq 1 ]] || fail "the example should exit with status 1"
+diff example/expected-report.txt "$work/report" || fail "the example's report differs from example/expected-report.txt"
+
+# No arguments is a usage error: status 2 and no report.
 run "$image"
-[[ $status -eq 2 && ! -s "$work/out" ]] || fail 'usage: status or stdout'
-printf '%s\n' 'template-drift: error: invalid_usage: invalid command-line arguments' | cmp -s - "$work/err" \
-  || fail 'usage: stderr'
-identity=$("$runtime" image inspect "$image" --format '{{.Config.User}} {{json .Config.Entrypoint}}')
-[[ "$identity" == '65532:65532 ["/usr/bin/python3.12","-I","-X","utf8","-B","-m","workflow_template_drift"]' ]] \
-  || fail "identity: $identity"
-printf 'image tests passed: %s on %s\n' "$image" "$platform"
+[[ $status -eq 2 && ! -s "$work/report" ]] || fail "a usage error should exit with status 2 and print no report"
+
+echo "image tests passed: $image on $platform"

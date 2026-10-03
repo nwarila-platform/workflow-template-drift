@@ -1,0 +1,4 @@
+stages:
+  - lint
+  - test
+# The four lines down to here come from the template. Add your own stages below.
