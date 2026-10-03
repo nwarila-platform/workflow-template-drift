@@ -6,6 +6,7 @@ command line against them, and compares the exact report and exit status.
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -265,6 +266,28 @@ class CheckerTest(unittest.TestCase):
         self.assertEqual(
             (done.returncode, done.stderr),
             (2, "template-drift: error: OSError: [Errno 28] No space left on device\n"),
+        )
+
+    @unittest.skipUnless(sys.platform == "linux", "needs the file-size limit that Linux has")
+    def test_a_report_cut_short_is_not_mistaken_for_drift(self):
+        # A file-size limit of 1 KiB lets the first write store part of the report and makes the next
+        # one fail, as when a disk fills up halfway through the report.
+        import resource  # imported here because only POSIX systems have it
+
+        self.manifest(*({"mode": "must_exist", "path": f"missing-{number:02}.txt"} for number in range(30)))
+
+        def limit_file_size():
+            signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+            resource.setrlimit(resource.RLIMIT_FSIZE, (1024, 1024))
+
+        with tempfile.TemporaryFile() as report:
+            done = subprocess.run(
+                self.command(), cwd=PROJECT, stdout=report, stderr=subprocess.PIPE, text=True,
+                check=False, preexec_fn=limit_file_size,
+            )
+        self.assertEqual(
+            (done.returncode, done.stderr),
+            (2, "template-drift: error: OSError: [Errno 27] File too large\n"),
         )
 
     def test_wrong_arguments_stop_the_check(self):

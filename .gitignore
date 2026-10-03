@@ -58,7 +58,7 @@
 !/.github/.config/template-drift.yaml
 !/.github/.config/template-drift.lock
 
-# Documents, and the organization's decision records that the drift check keeps in sync.
+# Documents, and the organization's decision records that the drift check verifies.
 !/README.md
 !/LICENSE
 !/SECURITY.md

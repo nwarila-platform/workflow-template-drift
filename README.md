@@ -104,7 +104,7 @@ template-drift: <PASS, WARNING or FAIL> (<n> templates, <n> checks, <n> errors, 
 | --- | --- |
 | `0` | The repository passes. Any warnings are still listed. |
 | `1` | The repository has drifted: at least one error, or any finding with `--fail-on warning`. |
-| `2` | The check could not be carried out: wrong arguments, a malformed manifest, a file that must be compared but cannot be read. This is never reported as drift. |
+| `2` | The check could not be carried out: wrong arguments, a malformed manifest, a file that must be compared but cannot be read, or a report that could not be written in full. This is never reported as drift, and anything already on standard output is incomplete and must be ignored. |
 
 ## Using it in a repository
 
@@ -147,8 +147,8 @@ the network so that the container needs none:
 1. It verifies the image's signature and confirms that the image is the pinned digest.
 2. On a pull request it reads the list of templates from the base branch, so a pull request cannot
    remove a template from its own check.
-3. It fetches each template at its pinned commit, after confirming that the commit belongs to the
-   template's default branch and that the pin has not moved backwards.
+3. It fetches each template at its pinned commit, then confirms that the commit belongs to the
+   template's default branch and, on a pull request, that the pin has not moved backwards.
 4. It runs the container with no network, a read-only filesystem and no capabilities, with the
    repository and the templates mounted read-only.
 
@@ -164,6 +164,8 @@ repos:
       - id: template-drift
 ```
 
+The hook runs before each push, so install it with `pre-commit install --hook-type pre-push`.
+
 ## Why the result can be trusted
 
 - **It only reports.** Nothing is patched, synchronized or repaired, so the check cannot damage the
@@ -172,11 +174,12 @@ repos:
   capabilities, and runs as an unprivileged user.
 - **Its inputs are pinned.** Templates are pinned by commit, and the image is verified by signature
   and by digest before it runs.
-- **A governed path never passes through a symbolic link.** A link at the path is reported as not
-  a regular file, and a link above it stops the check, so a repository cannot satisfy a rule by
-  pointing at a file kept somewhere else.
-- **Manifests are read strictly.** Unknown keys, repeated keys and paths that could leave the
-  repository are refused instead of ignored, so a typing mistake can never weaken a rule.
+- **A governed path never passes through a symbolic link.** A link at the path is always a
+  finding, and a link above it stops the check, so a repository cannot satisfy a rule by pointing
+  at a file kept somewhere else.
+- **Manifests are read strictly.** Unknown keys and modes, repeated keys and paths that could
+  leave the repository are refused instead of ignored, so a misspelt key or mode can never weaken
+  a rule.
 - **Status 1 means drift and nothing else.** Every failure of the check itself, even a report that
   cannot be written, exits with status 2.
 - **There is no third-party code in it.** The checker is about 300 lines of standard-library Python.
@@ -242,7 +245,7 @@ VERSION                       the version the next release tag must match
   .config/                    the templates this repository follows, and their pinned commits
   renovate.json5              dependency update rules
   CODEOWNERS                  who reviews changes
-docs/decision-records/org/    the organization's decision records, kept identical by this very check
+docs/decision-records/org/    the organization's decision records, checked against their template
 SECURITY.md                   how to report a vulnerability
 LICENSE                       MIT
 ```
