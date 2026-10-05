@@ -1,47 +1,66 @@
-# =========================================================================================== #
-# File: '.gitignore'
-# --- [ Description ] ----------------------------------------------------------------------- #
-#
-# DEFAULT-DENY, EXPLICIT INCLUDES ONLY. Nothing in this working tree is tracked unless it is
-# explicitly allowed below, by name. Adding any new file therefore requires allowing it here
-# first -- that is deliberate: it makes publishing a file an explicit act rather than an accident.
-#
-# =========================================================================================== #
+# Deny by default: nothing is tracked unless it is allowed below, by name (org ADR-0003).
+# Adding a file to the repository therefore means adding it here first, which makes publishing a
+# file a deliberate, reviewable act instead of an accident.
 
 # Ignore everything ...
 **
 
-# --- [ directory spine ] -------------------------------------------------------------------- #
-# Git does not descend into an excluded directory, so every directory on the path to an
-# allowed file is re-included by name. This publishes no files by itself.
+# ... then allow each directory that holds a tracked file. Git does not look inside an ignored
+# directory, so every directory on the way to an allowed file is listed. This allows no file.
 !/.github/
 !/.github/.config/
-!/.github/renovate.json5
 !/.github/workflows/
 !/docs/
 !/docs/decision-records/
 !/docs/decision-records/org/
-!/fixtures/
-!/fixtures/determinism/
-!/fixtures/determinism/source/
-!/fixtures/determinism/source/template/
-!/fixtures/determinism/workspace/
-!/fixtures/determinism/workspace/consumer/
-!/fixtures/goldens/
+!/example/
+!/example/repository/
+!/example/template/
 !/tests/
 !/tools/
 !/workflow_template_drift/
 
-# --- [ allowed: repository configuration ] -------------------------------------------------- #
+# The checker: a Python package and the image it ships in.
+!/workflow_template_drift/__init__.py
+!/workflow_template_drift/__main__.py
+!/workflow_template_drift/checker.py
+!/Containerfile
 !/.dockerignore
-!/.editorconfig
-!/.gitattributes
-!/.gitignore
+!/VERSION
+
+# The tests, and the example they share with the README.
+!/tests/host.sh
+!/tests/image.sh
+!/tests/test_checker.py
+!/example/expected-report.txt
+!/example/repository/CHANGELOG.md
+!/example/repository/legacy.cfg
+!/example/repository/lint.toml
+!/example/repository/pipeline.yaml
+!/example/template/lint.toml
+!/example/template/pipeline.yaml
+!/example/template/template-drift.json
+
+# Tools: the local run of the check, its pre-commit hook, and the release pipeline's registry client.
+!/tools/template-drift.sh
+!/tools/install-crane.sh
 !/.pre-commit-hooks.yaml
 
-# --- [ allowed: top-level documents ] ------------------------------------------------------- #
-!/LICENSE
+# Continuous integration, the release pipeline, and the workflow other repositories call.
+!/.github/workflows/ci.yaml
+!/.github/workflows/publish.yaml
+!/.github/workflows/check.yaml
+!/.github/workflows/workflow-containers.yaml
+!/.github/renovate.json5
+!/.github/CODEOWNERS
+
+# This repository's own template-drift setup: the templates it follows and the commits it pins.
+!/.github/.config/template-drift.yaml
+!/.github/.config/template-drift.lock
+
+# Documents, and the organization's decision records that the drift check verifies.
 !/README.md
+!/LICENSE
 !/SECURITY.md
 !/docs/decision-records/org/.gitkeep
 !/docs/decision-records/org/0001-use-architecture-decision-records.md
@@ -50,44 +69,7 @@
 !/docs/decision-records/org/0004-use-renovate-for-dependency-updates.md
 !/docs/decision-records/org/0005-keep-github-control-planes-namespace-local.md
 
-# --- [ allowed: GitHub configuration ] ------------------------------------------------------ #
-!/.github/CODEOWNERS
-!/.github/.config/template-drift.yaml
-!/.github/.config/template-drift.lock
-!/.github/workflows/ci.yaml
-!/.github/workflows/check.yaml
-!/.github/workflows/publish.yaml
-!/.github/workflows/workflow-containers.yaml
-
-# --- [ allowed: the checker ] --------------------------------------------------------------- #
-!/Containerfile
-!/workflow_template_drift/__init__.py
-!/workflow_template_drift/__main__.py
-!/workflow_template_drift/engine.py
-
-# --- [ allowed: the publish pipeline's pinned registry client and the release version ] ----- #
-!/tools/install-crane.sh
-!/tools/template-drift.sh
-!/tools/workflow-container.sh
-!/VERSION
-
-# --- [ allowed: the evidence harness ] ------------------------------------------------------ #
-!/tests/__init__.py
-!/tests/host.sh
-!/tests/image.sh
-!/tests/support.py
-!/tests/test_determinism.py
-!/tests/test_engine.py
-!/tests/test_git_patch.py
-!/fixtures/determinism/source/drift.json
-!/fixtures/determinism/source/template/file.txt
-!/fixtures/determinism/workspace/consumer/file.txt
-!/fixtures/goldens/determinism.text
-!/fixtures/goldens/determinism.patch
-
-# --- [ never tracked, even by a future allowance ] ------------------------------------------ #
-# Local no-pip runtime, test artifacts, the CI harness copy, and bytecode caches.
-/.runtime/
-/artifacts/
-/.ci-harness/
-__pycache__/
+# Repository settings for editors and for Git.
+!/.editorconfig
+!/.gitattributes
+!/.gitignore

@@ -1,110 +1,255 @@
 # workflow-template-drift
 
-This container compares one workspace with one or more pinned public template checkouts. It makes
-no network calls or writes, uses only the Python standard library, and returns one aggregate result.
-Targets must be unique and path-disjoint across every template.
+[![CI](https://github.com/nwarila-platform/workflow-template-drift/actions/workflows/ci.yaml/badge.svg)](https://github.com/nwarila-platform/workflow-template-drift/actions/workflows/ci.yaml)
 
-Text is the default format. Findings are sorted by path, mode, and template:
+A small container that answers one question on every pull request: **has this repository drifted
+from the templates it is supposed to follow?**
+
+It compares the repository with pinned copies of its templates, prints a report, and exits. That is
+all it does. It never edits a file, it never opens a network connection, and it depends on nothing
+but the Python standard library.
+
+## Why it exists
+
+An organization keeps its shared files (CI workflows, security policies, linter settings, decision
+records) in template repositories and copies them into every project. Copies drift. Someone edits
+one, or the template moves on, and nobody notices until the difference matters. This check makes
+drift visible where it is cheapest to fix: in the pull request that introduces it.
+
+A plain `diff` cannot do the job, because the rules are not all "identical". Some files must match
+exactly, some only in their first lines, some must merely exist, and some must not exist at all.
+
+```mermaid
+flowchart LR
+    T["Template repositories<br/>their rules and shared files"]
+    R["Your repository<br/>which templates, at which commits"]
+    C["workflow-template-drift<br/>offline, read-only container"]
+    O["A report and an exit status<br/>0 pass, 1 drift, 2 could not run"]
+    T -- "fetched at the pinned commit" --> C
+    R -- "mounted read-only" --> C
+    C --> O
+```
+
+## See it work
+
+The repository carries a miniature template and a miniature repository that has drifted from it.
+With Python 3.12 and nothing installed, run:
+
+```sh
+python3 -m workflow_template_drift \
+  --workspace example/repository \
+  --template example/template=example/template
+```
 
 ```text
-error: path: bytes_equal/content_mismatch (template owner/repo): target content differs from the pinned template
-template-drift: FAIL (1 template, 1 check, 1 error, 0 warnings, 1 fixable)
+warning: SECURITY.md: must_exist/target_missing (template example/template): target is missing
+error: legacy.cfg: must_be_absent/target_present (template example/template): target must be absent
+error: lint.toml: bytes_equal/content_mismatch (template example/template): target content differs from the pinned template
+template-drift: FAIL (1 template, 5 checks, 2 errors, 1 warning)
 ```
 
-The final line is `template-drift: PASS (<T> templates, <C> checks, 0 errors, 0 warnings)`,
-`template-drift: WARNING (<T> templates, <C> checks, <E> errors, <W> warnings)`, or `template-drift: FAIL (<T> templates, <C> checks, <E> errors, <W> warnings, <F> fixable)`; count nouns are singular only for 1. A tool error writes only
-`template-drift: error: <code>: <message> (<path>)` to stderr. Exit 0 means pass or warning, exit 1
-means policy failure, and exit 2 means a usage, configuration, resource, or I/O error.
-`--format patch` prints only the aggregate `git apply`-able patch and is empty when no fix is possible.
-Each repeatable source argument is `--template owner/repo=dir`; labels are explicit output metadata.
-With `--fail-on error`, WARNING findings still appear and annotate but do not fail the gate.
+The template declares five checks. Two pass and are not mentioned: `CHANGELOG.md` exists, and
+`pipeline.yaml` still starts with the template's four lines, although the repository added a stage
+of its own below them. The other three each get one line, and the command exits with status 1.
 
-The consumer calls the inherited workflow:
+## The four checks
 
-```yaml
-name: Workflow containers
-on:
-  pull_request:
-  push:
-    branches: [main]
-permissions:
-  contents: read
-  pull-requests: write
-jobs:
-  template-drift:
-    uses: nwarila-platform/workflow-template-drift/.github/workflows/check.yaml@<40-hex> # v2.1.0
+A template repository lists its rules in a file named `template-drift.json` at its root. This is
+the example's, [`example/template/template-drift.json`](example/template/template-drift.json):
+
+```json
+{
+  "version": 3,
+  "checks": [
+    {"mode": "bytes_equal", "path": "lint.toml"},
+    {"mode": "head_lines_equal", "path": "pipeline.yaml", "head_lines": 4},
+    {"mode": "must_exist", "path": "CHANGELOG.md"},
+    {"mode": "must_exist", "path": "SECURITY.md", "severity": "warning"},
+    {"mode": "must_be_absent", "path": "legacy.cfg"}
+  ]
+}
 ```
 
-The checker repository wraps the generic org runner:
+| Mode | The repository passes when | Use it for |
+| --- | --- | --- |
+| `bytes_equal` | the file is byte-for-byte identical to the template's copy | a file nobody should change locally |
+| `head_lines_equal` | the file's first `head_lines` lines are identical to the template's | a file with a fixed top that each repository extends below |
+| `must_exist` | a file exists at the path | a file every repository needs but writes for itself |
+| `must_be_absent` | nothing exists at the path | a retired file that must not come back |
 
-```yaml
-jobs:
-  run:
-    uses: nwarila-platform/.github/.github/workflows/run-container.yaml@<40-hex>
-    permissions: {contents: read, pull-requests: write}
-    with:
-      name: template-drift
-      version: 2.1.0
+- `path` names the same path in the template and in the repository. The two comparing modes also
+  accept `source` (the path in the template) with `target` (the path in the repository), for when
+  the two differ.
+- `severity` is `error` unless it is set to `warning`. A warning is reported but does not fail the
+  check, which lets a template announce a rule before it enforces it.
+- A repository may follow several templates, but each path may be governed by only one of them.
+
+## The report
+
+The report has one line for each broken rule, sorted by path, and then one summary line:
+
+```text
+<severity>: <path>: <mode>/<problem> (template <owner/repo>): <explanation>
+template-drift: <PASS, WARNING or FAIL> (<n> templates, <n> checks, <n> errors, <n> warnings)
 ```
 
-Consumers declare trusted templates and immutable inputs:
+| Problem | Meaning |
+| --- | --- |
+| `target_missing` | nothing exists at the path |
+| `target_not_regular` | something exists at the path, but it is not a regular file: a directory or a symbolic link, for example |
+| `content_mismatch` | the file, or its first lines, differs from the template's |
+| `target_present` | something exists at a path that must be empty |
+
+| Exit status | Meaning |
+| --- | --- |
+| `0` | The repository passes. Any warnings are still listed. |
+| `1` | The repository has drifted: at least one error, or any finding with `--fail-on warning`. |
+| `2` | The check could not be carried out: wrong arguments, a malformed manifest, a file that must be compared but cannot be read, or a report that could not be written in full. This is never reported as drift, and anything already on standard output is incomplete and must be ignored. |
+
+## Using it in a repository
+
+A repository that follows templates carries two small files and one workflow job.
+
+`.github/.config/template-drift.yaml` names the templates. An entry without an owner, such as
+`.github`, means a repository in the same organization:
 
 ```yaml
 templates:
-  - nwarila-platform/.github
+  - .github
   - NWarila/terraform-framework-template
 ```
 
+`.github/.config/template-drift.lock` pins each template to one commit. Adopting a newer version of
+a template is a one-line change here, and the report on that pull request lists every file that has
+to follow:
+
 ```text
-nwarila-platform/.github 213fd21563f8111abe77e589b6bd75323e608ab1
-NWarila/terraform-framework-template <40-hex>
+nwarila-platform/.github 0188f9cc9d325aaa1d173286da9a2ba99210b09c
+NWarila/terraform-framework-template <40-character commit>
 ```
 
-The lock omits the consumer's own repository. On pull requests, CI takes identity and template names
-from the protected base and only OIDs from the head lock. CI verifies release-tag signatures, uses the
-reported digest, validates reachability and non-rewind, then runs without network and with read-only mounts.
-An ownerless identity item such as `.github` resolves under the consumer repository's own organization.
-Onboard with two PRs: land identity plus lock first, then add the inherited-workflow call in a second PR.
+The workflow job calls [`check.yaml`](.github/workflows/check.yaml) in this repository, pinned to a
+commit, and says which release of the container to run:
 
-`tools/template-drift.sh check [--fail-on error|warning]` checks the current repository.
-`tools/template-drift.sh sync [--fail-on error|warning]` resolves template default-branch heads, applies
-the exact patch unstaged, and rewrites the lock. The helper caches exact OIDs and supports Podman or Docker.
-Its image reference is a release tag; signature-verified CI is the authority for the immutable digest.
-If patch application fails after a pre-check, first correct the underlying I/O or permission failure.
-For each path from `git apply --numstat -z "$recovery_patch"`, run the first two commands; after all paths, run the final two:
+```yaml
+jobs:
+  template-drift:
+    permissions: {contents: read, security-events: write}
+    uses: nwarila-platform/workflow-template-drift/.github/workflows/check.yaml@<40-character commit>
+    with:
+      version: <version>
+      digest: sha256:<digest of that version's image>
+```
+
+`check.yaml` hands the job to the organization's runner workflow, which does everything that needs
+the network so that the container needs none:
+
+1. It verifies the image's signature and confirms that the image is the pinned digest.
+2. On a pull request it reads the list of templates from the base branch, so a pull request cannot
+   remove a template from its own check.
+3. It fetches each template at its pinned commit, then confirms that the commit belongs to the
+   template's default branch and, on a pull request, that the pin has not moved backwards.
+4. It runs the container with no network, a read-only filesystem and no capabilities, with the
+   repository and the templates mounted read-only.
+
+To run the same check before pushing, use [`tools/template-drift.sh`](tools/template-drift.sh),
+which needs only Git and either Podman or Docker. It is also published as a
+[pre-commit](https://pre-commit.com) hook:
+
+```yaml
+repos:
+  - repo: https://github.com/nwarila-platform/workflow-template-drift
+    rev: <40-character commit>
+    hooks:
+      - id: template-drift
+```
+
+The hook runs before each push, so install it with `pre-commit install --hook-type pre-push`.
+
+## Why the result can be trusted
+
+- **It only reports.** Nothing is patched, synchronized or repaired, so the check cannot damage the
+  repository it inspects.
+- **It runs offline and unprivileged.** The container has no network, no writable filesystem and no
+  capabilities, and runs as an unprivileged user.
+- **Its inputs are pinned.** Templates are pinned by commit, and the image is verified by signature
+  and by digest before it runs.
+- **A governed path never passes through a symbolic link.** A link at the path is always a
+  finding, and a link above it stops the check, so a repository cannot satisfy a rule by pointing
+  at a file kept somewhere else.
+- **Manifests are read strictly.** Unknown keys and modes, repeated keys and paths that could
+  leave the repository are refused instead of ignored, so a misspelt key or mode can never weaken
+  a rule.
+- **Status 1 means drift and nothing else.** Every failure of the check itself, even a report that
+  cannot be written, exits with status 2.
+- **There is no third-party code in it.** The checker is about 300 lines of standard-library Python.
+
+## How a release is made
+
+Pushing a signed tag `v<VERSION>` starts [`publish.yaml`](.github/workflows/publish.yaml). Its jobs
+run in this order, and a release tag appears on the image only if every one of them succeeds:
+
+| Job | What it does |
+| --- | --- |
+| Release and SLSA tag integrity | Confirms that the tag is annotated and signed, and that it points at the commit being built. |
+| Publish unaliased candidate by digest | Confirms that the tag matches `VERSION`, builds the image for `amd64` and `arm64` with a software bill of materials, and pushes it by digest only, with no tag. |
+| Sign candidate index and children | Signs the image with Sigstore keyless signing, tied to this workflow and this tag. |
+| SLSA L3 provenance | Attaches build provenance from the SLSA GitHub generator. |
+| Anonymous evidence and runtime verification | Logged out, as any consumer would be, checks the signatures, the provenance and the bills of materials, then runs [`tests/image.sh`](tests/image.sh) on each architecture's image. |
+| Promote verified digest to consumer tags | Only now gives the image its version tag and a `sha-<commit>` tag. A tag is created once and never moved. |
+
+There is no `latest` tag. Anyone can verify a release from a checkout of its tag:
 
 ```sh
-git apply -R --check --include="$path" "$recovery_patch"
-git apply -R --include="$path" "$recovery_patch" # only after that path's check succeeds
-git status --short -- <paths>
-rm -rf -- "$(dirname "$recovery_patch")"
+version=$(cat VERSION)
+cosign verify "ghcr.io/nwarila-platform/workflow-template-drift:$version" \
+  --certificate-identity "https://github.com/nwarila-platform/workflow-template-drift/.github/workflows/publish.yaml@refs/tags/v$version" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-The checked path-wise reverse restores completely applied additions, deletions, and modifications while
-skipping untouched later paths; inspect the status before removing the retained run-temporary directory.
-
-The `template-drift` pre-commit hook runs at pre-push. `template-drift-sync` is manual. A consumer copies
-both entries into `.pre-commit-config.yaml` once and may then run:
+## Working on it
 
 ```sh
-pre-commit run template-drift --all-files --hook-stage pre-push
-pre-commit run template-drift-sync --all-files --hook-stage manual
+bash tests/host.sh                                          # the unit tests; needs only Python 3.12
+docker build --file Containerfile --tag template-drift:dev .
+bash tests/image.sh template-drift:dev linux/amd64          # the example, through the built image
 ```
 
-A successful sync that changes files intentionally leaves them unstaged, so pre-commit reports
-`files were modified by this hook` and exits 1; inspect and commit those changes normally.
+With Podman, build with `podman build` and set `CONTAINER_RUNTIME=podman` for the image tests.
+[`ci.yaml`](.github/workflows/ci.yaml) runs both test scripts on every pull request and on every
+push to `main`, building and testing the image on `amd64` and on `arm64`.
 
-Pushing a signed `vX.Y.Z` tag matching `VERSION` retains the existing multi-platform publish, SBOM,
-provenance, and keyless signing workflow. There is no `latest` tag.
+## What is in this repository
 
-Run the host harness without package installation:
-
-```sh
-python3.12 -m venv --without-pip .runtime
-ln -s ../../../../workflow_template_drift .runtime/lib/python3.12/site-packages/workflow_template_drift
-PATH="$PWD/.runtime/bin:$PATH" python3.12 -B -m unittest discover -s . -t . -v
+```text
+workflow_template_drift/      the checker
+  checker.py                  manifests, the four checks and the report
+  __main__.py                 the command line and the exit statuses
+  __init__.py                 marks the directory as a Python package
+example/                      a template, a repository that has drifted from it, and the expected report
+tests/
+  test_checker.py             end-to-end tests of the command line
+  host.sh                     runs the unit tests
+  image.sh                    runs the example through a built image
+tools/
+  template-drift.sh           runs the check locally, the way CI runs it
+  install-crane.sh            installs the registry client the release pipeline uses, by checksum
+Containerfile                 the image: the base Python image plus the checker
+VERSION                       the version the next release tag must match
+.pre-commit-hooks.yaml        the pre-commit hook other repositories can use
+.github/
+  workflows/check.yaml        the workflow other repositories call
+  workflows/ci.yaml           tests on every pull request, on both architectures
+  workflows/publish.yaml      the release pipeline
+  workflows/workflow-containers.yaml   this repository checking itself with its own latest release
+  .config/                    the templates this repository follows, and their pinned commits
+  renovate.json5              dependency update rules
+  CODEOWNERS                  who reviews changes
+docs/decision-records/org/    the organization's decision records, checked against their template
+SECURITY.md                   how to report a vulnerability
+LICENSE                       MIT
 ```
 
-The custom evaluator remains necessary because Git and rsync do not combine absence/existence/head-line
-policies, bounded no-follow reads, multi-template target collision checks, and one deterministic patch.
-The helper composes maintained Git, Python, Podman/Docker, and pre-commit around the identity/lock protocol.
+The remaining files (`.gitignore`, `.dockerignore`, `.editorconfig`, `.gitattributes`) configure
+Git, the image build and editors. `.gitignore` is deny-by-default: a file is tracked only if it is
+listed there by name.

@@ -1,13 +1,25 @@
+# The workflow other repositories call to run this check. It names the container and passes the
+# release to run; the organization's runner then verifies that release's signature, fetches the
+# caller's pinned templates, and runs the container offline.
 name: check
 on:
   workflow_call:
+    inputs:
+      version: {required: true, type: string}
+      digest: {required: true, type: string}
+permissions: {}
 jobs:
   run:
     # renovate: datasource=git-refs depName=nwarila-platform/.github packageName=https://github.com/nwarila-platform/.github.git currentValue=main
-    uses: nwarila-platform/.github/.github/workflows/run-container.yaml@49b9084988d2bb64d14f0ed2a81453a3435b935d
+    uses: nwarila-platform/.github/.github/workflows/run-container.yaml@0188f9cc9d325aaa1d173286da9a2ba99210b09c
     permissions:
       contents: read
-      pull-requests: write
+      security-events: write # The runner's job declares this, and a called workflow cannot hold more than its caller grants.
     with:
       name: template-drift
-      version: 2.1.0
+      contract: 1
+      tier: offline
+      templates: true
+      patch: false
+      version: ${{ inputs.version }}
+      digest: ${{ inputs.digest }}
