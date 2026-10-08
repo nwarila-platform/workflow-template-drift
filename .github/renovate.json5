@@ -16,6 +16,14 @@
     {
       "matchPackageNames": ["nwarila-platform/**", "NWarila/**"],
       "minimumReleaseAge": null
+    },
+    {
+      // Hold the organization runner pin in check.yaml. Contract 2 of run-container.yaml
+      // (nwarila-platform/.github 95ca3c2, 2026-10-08) takes different inputs, so a SHA-only
+      // update would call it with contract-1 inputs. This repository moves by hand when it
+      // switches to contract 2.
+      "matchDepNames": ["nwarila-platform/.github"],
+      "enabled": false
     }
   ]
 }
